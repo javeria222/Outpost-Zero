@@ -366,8 +366,6 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       }
     };
 
-    canvas.tabIndex = 0;
-    canvas.style.outline = "none";
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -524,6 +522,57 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
 }
 
 
+type WorldProps = {
+  buildMode: boolean;
+  selectedBuilding: BuildingType;
+  colony: ColonyState;
+  onPlaceBuilding: (type: BuildingType, x: number, z: number, rotation: number) => void;
+};
+
+function World({
+  buildMode,
+  selectedBuilding,
+  colony,
+  onPlaceBuilding,
+}: WorldProps) {
+  return (
+    <>
+      <color attach="background" args={["#080d20"]} />
+      <fog attach="fog" args={["#986b60", 90, 240]} />
+
+      <ambientLight intensity={1.2} />
+      <hemisphereLight args={["#b7d2ff", "#79544d", 1.5]} />
+      <directionalLight
+        position={[-20, 35, 15]}
+        color="#ffe2c2"
+        intensity={3}
+        castShadow
+      />
+
+      <pointLight position={[0, 5, -8]} color="#55bfff" intensity={30} distance={45} />
+      <Stars radius={180} depth={100} count={7000} factor={3} saturation={0.2} fade speed={0.15} />
+
+      <Terrain />
+
+      <Habitat position={[-5, 0, -5]} label="HAB-01" />
+      <Habitat position={[-11, 0, -8]} label="HAB-02" />
+
+      <SolarFarm position={[3, 0, -10]} />
+      <CommunicationsTower />
+      <Rocks />
+      <FollowCamera buildMode={buildMode} />
+
+      <BuildMode
+        active={buildMode}
+        selected={selectedBuilding}
+        buildings={colony.buildings}
+        credits={colony.resources.credits}
+        onPlace={onPlaceBuilding}
+      />
+    </>
+  );
+}
+
 export default function App() {
   const [colony, setColony] = useState<ColonyState>(() => createNewColony());
   const [buildMode, setBuildMode] = useState(false);
@@ -552,6 +601,8 @@ export default function App() {
   return (
     <main className="game">
       <Canvas
+        tabIndex={0}
+        style={{ outline: "none" }}
         shadows
         dpr={[1, 1.5]}
         camera={{ position: [0, 5, 12], fov: 65, near: 0.1, far: 500 }}

@@ -208,7 +208,6 @@ export default function BuildMode({
 
   useEffect(() => {
     if (!active) {
-      setPosition(null);
       return;
     }
 
@@ -268,6 +267,7 @@ export default function BuildMode({
     canvas.addEventListener("click", onClick);
 
     return () => {
+      setPosition(null);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("keydown", onKeyDown);
       canvas.removeEventListener("click", onClick);
