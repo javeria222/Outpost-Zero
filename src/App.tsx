@@ -1,42 +1,42 @@
 
-import { useEffect, useRef } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Stars } from '@react-three/drei'
-import * as THREE from 'three'
-import './App.css'
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Stars } from "@react-three/drei";
+import * as THREE from "three";
+import "./App.css";
+
+import BuildMode from "./game/BuildMode";
+import {
+  BUILDINGS,
+  advanceSol,
+  constructBuilding,
+  createNewColony,
+  type BuildingType,
+  type ColonyState,
+} from "./game/colonySimulation";
 
 function Astronaut() {
-  const body = useRef<THREE.Group>(null)
+  const body = useRef<THREE.Group>(null);
 
   return (
-    <group ref={body} position={[0, 0, 0]}>
-      {/* Backpack */}
-      <mesh position={[0, 1.05, 0.25]}>
+    <group ref={body}>
+      <mesh position={[0, 1.05, 0.25]} castShadow>
         <boxGeometry args={[0.48, 0.7, 0.28]} />
         <meshStandardMaterial color="#64758b" metalness={0.55} roughness={0.4} />
       </mesh>
 
-      {/* Body */}
-      <mesh position={[0, 1.05, 0]}>
+      <mesh position={[0, 1.05, 0]} castShadow>
         <capsuleGeometry args={[0.36, 0.5, 8, 16]} />
         <meshStandardMaterial color="#e3e9f0" metalness={0.2} roughness={0.55} />
       </mesh>
 
-      {/* Helmet */}
-      <mesh position={[0, 1.85, 0]}>
+      <mesh position={[0, 1.85, 0]} castShadow>
         <sphereGeometry args={[0.32, 32, 24]} />
-        <meshStandardMaterial
-          color="#dce7f5"
-          metalness={0.75}
-          roughness={0.18}
-        />
+        <meshStandardMaterial color="#dce7f5" metalness={0.75} roughness={0.18} />
       </mesh>
 
-      {/* Dark visor */}
       <mesh position={[0, 1.86, -0.245]} rotation={[0.08, 0, 0]}>
-        <sphereGeometry
-          args={[0.245, 24, 20, 0, Math.PI * 2, 0, Math.PI * 0.48]}
-        />
+        <sphereGeometry args={[0.245, 24, 20, 0, Math.PI * 2, 0, Math.PI * 0.48]} />
         <meshStandardMaterial
           color="#10283e"
           metalness={0.85}
@@ -46,7 +46,6 @@ function Astronaut() {
         />
       </mesh>
 
-      {/* Arms */}
       {[-1, 1].map((side) => (
         <group key={side} position={[side * 0.42, 1.15, 0]}>
           <mesh rotation={[0, 0, side * -0.12]}>
@@ -60,7 +59,6 @@ function Astronaut() {
         </group>
       ))}
 
-      {/* Legs */}
       {[-1, 1].map((side) => (
         <group key={side} position={[side * 0.19, 0.48, 0]}>
           <mesh position={[0, -0.12, 0]}>
@@ -74,47 +72,38 @@ function Astronaut() {
         </group>
       ))}
 
-      {/* Suit chest light */}
       <mesh position={[0, 1.15, -0.355]}>
         <boxGeometry args={[0.12, 0.16, 0.025]} />
         <meshBasicMaterial color="#63f2ff" />
       </mesh>
     </group>
-  )
+  );
 }
 
 function Habitat({
   position,
   label,
 }: {
-  position: [number, number, number]
-  label: string
+  position: [number, number, number];
+  label: string;
 }) {
   return (
     <group position={position}>
-      {/* Foundation */}
       <mesh position={[0, 0.12, 0]}>
         <cylinderGeometry args={[2.4, 2.7, 0.25, 12]} />
         <meshStandardMaterial color="#6b5150" />
       </mesh>
 
-      {/* Main habitat */}
       <mesh position={[0, 1.25, 0]}>
         <cylinderGeometry args={[1.5, 1.65, 2.2, 12]} />
-        <meshStandardMaterial
-          color="#c2cbd5"
-          metalness={0.5}
-          roughness={0.45}
-        />
+        <meshStandardMaterial color="#c2cbd5" metalness={0.5} roughness={0.45} />
       </mesh>
 
-      {/* Roof */}
       <mesh position={[0, 2.4, 0]}>
         <sphereGeometry args={[1.48, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
         <meshStandardMaterial color="#7f96aa" metalness={0.4} roughness={0.4} />
       </mesh>
 
-      {/* Windows */}
       {[-0.8, 0, 0.8].map((x) => (
         <mesh key={x} position={[x, 1.45, -1.51]}>
           <boxGeometry args={[0.34, 0.48, 0.05]} />
@@ -122,13 +111,11 @@ function Habitat({
         </mesh>
       ))}
 
-      {/* Entrance */}
       <mesh position={[0, 0.75, -1.68]}>
         <boxGeometry args={[0.7, 1.35, 0.12]} />
         <meshStandardMaterial color="#35465a" metalness={0.65} />
       </mesh>
 
-      {/* Glowing perimeter */}
       <mesh position={[0, 0.28, 0]}>
         <cylinderGeometry args={[2.48, 2.48, 0.035, 32]} />
         <meshBasicMaterial color="#54e9ff" />
@@ -148,14 +135,26 @@ function Habitat({
         </mesh>
       </group>
 
-      <group>
-        <mesh position={[0, 0.03, 0]}>
-          <cylinderGeometry args={[2.9, 2.9, 0.025, 32]} />
-          <meshBasicMaterial color="#b6b9c8" wireframe />
+      <mesh position={[0, 0.03, 0]}>
+        <cylinderGeometry args={[2.9, 2.9, 0.025, 32]} />
+        <meshBasicMaterial color="#b6b9c8" wireframe />
+      </mesh>
+
+      <mesh position={[0, 4.1, 0]}>
+        <sphereGeometry args={[0.001, 4, 4]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+
+      <group position={[0, 4.3, 0]}>
+        <mesh>
+          <boxGeometry args={[0.01, 0.01, 0.01]} />
+          <meshBasicMaterial transparent opacity={0} />
         </mesh>
       </group>
+
+      <group name={label} />
     </group>
-  )
+  );
 }
 
 function SolarFarm({ position }: { position: [number, number, number] }) {
@@ -189,7 +188,7 @@ function SolarFarm({ position }: { position: [number, number, number] }) {
         </group>
       ))}
     </group>
-  )
+  );
 }
 
 function CommunicationsTower() {
@@ -214,13 +213,13 @@ function CommunicationsTower() {
 
       <pointLight position={[0, 3.1, 0]} color="#ff8e68" intensity={3} distance={10} />
     </group>
-  )
+  );
 }
 
 function Rocks() {
   const rocks = Array.from({ length: 90 }, (_, i) => {
-    const angle = i * 2.399
-    const radius = 12 + (i % 9) * 2.4
+    const angle = i * 2.399;
+    const radius = 12 + (i % 9) * 2.4;
 
     return {
       position: [
@@ -234,8 +233,8 @@ function Rocks() {
         0.35 + (i % 5) * 0.12,
       ] as [number, number, number],
       rotation: (i * 0.7) % 3,
-    }
-  })
+    };
+  });
 
   return (
     <group>
@@ -249,24 +248,27 @@ function Rocks() {
         >
           <dodecahedronGeometry args={[1, 1]} />
           <meshStandardMaterial
-            color={i % 3 === 0 ? '#92716a' : '#66585b'}
+            color={i % 3 === 0 ? "#92716a" : "#66585b"}
             roughness={1}
           />
         </mesh>
       ))}
     </group>
-  )
+  );
 }
 
 function Terrain() {
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.12, 0]} receiveShadow>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.12, 0]}
+        receiveShadow
+      >
         <planeGeometry args={[600, 600, 100, 100]} />
         <meshStandardMaterial color="#986b60" roughness={1} />
       </mesh>
 
-      {/* Distant Martian ridges */}
       {Array.from({ length: 15 }, (_, i) => (
         <mesh
           key={i}
@@ -279,238 +281,288 @@ function Terrain() {
         </mesh>
       ))}
 
-      {/* Ground details */}
       {Array.from({ length: 100 }, (_, i) => {
-        const x = Math.sin(i * 78.2) * 42
-        const z = Math.cos(i * 43.7) * 42
+        const x = Math.sin(i * 78.2) * 42;
+        const z = Math.cos(i * 43.7) * 42;
 
         return (
-          <mesh key={i} position={[x, -0.03, z]} rotation={[-Math.PI / 2, 0, i]}>
+          <mesh
+            key={i}
+            position={[x, -0.03, z]}
+            rotation={[-Math.PI / 2, 0, i]}
+          >
             <ringGeometry args={[0.18, 0.23, 8]} />
             <meshBasicMaterial color="#b68a79" />
           </mesh>
-        )
+        );
       })}
     </group>
-  )
+  );
 }
 
 
-
-function FollowCamera() {
-  const { camera, gl } = useThree()
-  const player = useRef<THREE.Group>(null)
-  const keys = useRef<Record<string, boolean>>({})
-  const yaw = useRef(0)
-  const pitch = useRef(0.12)
-  const verticalVelocity = useRef(0)
-  const isGrounded = useRef(true)
+function FollowCamera({ buildMode }: { buildMode: boolean }) {
+  const { camera, gl } = useThree();
+  const player = useRef<THREE.Group>(null);
+  const keys = useRef<Record<string, boolean>>({});
+  const yaw = useRef(0);
+  const pitch = useRef(0.12);
+  const verticalVelocity = useRef(0);
+  const isGrounded = useRef(true);
 
   useEffect(() => {
-    const canvas = gl.domElement
+    const canvas = gl.domElement;
 
     const controlledKeys = [
-      'ArrowUp',
-      'ArrowDown',
-      'ArrowLeft',
-      'ArrowRight',
-      'Space',
-      'ShiftLeft',
-      'ShiftRight',
-    ]
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "KeyE",
+      "Space",
+      "ShiftLeft",
+      "ShiftRight",
+    ];
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!controlledKeys.includes(event.code)) return
+      if (!controlledKeys.includes(event.code)) return;
+      if (buildMode) return;
 
-      event.preventDefault()
-      keys.current[event.code] = true
-    }
+      event.preventDefault();
+      keys.current[event.code] = true;
+    };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      keys.current[event.code] = false
-    }
+      keys.current[event.code] = false;
+    };
 
     const clearKeys = () => {
-      keys.current = {}
-    }
+      keys.current = {};
+    };
 
     const onMouseMove = (event: MouseEvent) => {
-      if (document.pointerLockElement !== canvas) return
+      if (buildMode || document.pointerLockElement !== canvas) return;
 
-      yaw.current -= event.movementX * 0.0025
+      yaw.current -= event.movementX * 0.0025;
 
       pitch.current = THREE.MathUtils.clamp(
         pitch.current - event.movementY * 0.0018,
         -0.2,
         0.65,
-      )
-    }
+      );
+    };
 
     const onCanvasClick = () => {
-      canvas.focus()
+      if (buildMode) return;
+
+      canvas.focus();
 
       if (document.pointerLockElement !== canvas) {
-        canvas.requestPointerLock()
+        canvas.requestPointerLock();
       }
+    };
+
+    canvas.tabIndex = 0;
+    canvas.style.outline = "none";
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearKeys);
+    document.addEventListener("visibilitychange", clearKeys);
+    window.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("click", onCanvasClick);
+
+    if (buildMode && document.pointerLockElement === canvas) {
+      document.exitPointerLock();
     }
-
-    canvas.tabIndex = 0
-    canvas.style.outline = 'none'
-
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    window.addEventListener('blur', clearKeys)
-    document.addEventListener('visibilitychange', clearKeys)
-    window.addEventListener('mousemove', onMouseMove)
-    canvas.addEventListener('click', onCanvasClick)
 
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-      window.removeEventListener('blur', clearKeys)
-      document.removeEventListener('visibilitychange', clearKeys)
-      window.removeEventListener('mousemove', onMouseMove)
-      canvas.removeEventListener('click', onCanvasClick)
-    }
-  }, [gl])
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearKeys);
+      document.removeEventListener("visibilitychange", clearKeys);
+      window.removeEventListener("mousemove", onMouseMove);
+      canvas.removeEventListener("click", onCanvasClick);
+    };
+  }, [gl, buildMode]);
 
   useFrame((_, delta) => {
-    const astronaut = player.current
-    if (!astronaut) return
+    const astronaut = player.current;
 
-    const dt = Math.min(delta, 0.05)
+    if (!astronaut || buildMode) return;
 
+    const dt = Math.min(delta, 0.05);
+
+    // Camera-relative movement
     const forward = new THREE.Vector3(
       -Math.sin(yaw.current),
       0,
       -Math.cos(yaw.current),
-    )
+    );
 
     const right = new THREE.Vector3(
       -forward.z,
       0,
       forward.x,
-    )
+    );
 
-    const movement = new THREE.Vector3()
+    const movement = new THREE.Vector3();
 
-    if (keys.current.ArrowUp) movement.add(forward)
-    if (keys.current.ArrowDown) movement.sub(forward)
-    if (keys.current.ArrowRight) movement.add(right)
-    if (keys.current.ArrowLeft) movement.sub(right)
+    // AZERTY: ZQSD
+    if (keys.current.KeyW || keys.current.ArrowUp) {
+      movement.add(forward);
+    }
+
+    if (keys.current.KeyS || keys.current.ArrowDown) {
+      movement.sub(forward);
+    }
+
+    if (keys.current.KeyD || keys.current.ArrowRight) {
+      movement.add(right);
+    }
+
+    if (keys.current.KeyA || keys.current.ArrowLeft) {
+      movement.sub(right);
+    }
 
     if (movement.lengthSq() > 0) {
-      movement.normalize()
+      movement.normalize();
 
       const sprinting =
-        keys.current.ShiftLeft || keys.current.ShiftRight
+        keys.current.ShiftLeft ||
+        keys.current.ShiftRight;
 
-      const speed = sprinting ? 9 : 5
+      const speed = sprinting ? 9 : 5;
 
-      astronaut.position.addScaledVector(movement, speed * dt)
+      astronaut.position.addScaledVector(
+        movement,
+        speed * dt,
+      );
 
       astronaut.rotation.y = Math.atan2(
         -movement.x,
         -movement.z,
-      )
+      );
     }
 
-    // Jumping and gravity
-    if (keys.current.Space && isGrounded.current) {
-      verticalVelocity.current = 7
-      isGrounded.current = false
+    // E: Hold to fly continuously
+    if (keys.current.KeyE) {
+      isGrounded.current = false;
+
+      verticalVelocity.current = Math.min(
+        verticalVelocity.current + 30 * dt,
+        12,
+      );
+    } else {
+      // Space: Jump once
+      if (keys.current.Space && isGrounded.current) {
+        verticalVelocity.current = 7;
+        isGrounded.current = false;
+        keys.current.Space = false;
+      }
+
+      // Gravity
+      verticalVelocity.current = Math.max(
+        verticalVelocity.current - 18 * dt,
+        -8,
+      );
     }
 
-    verticalVelocity.current -= 18 * dt
-    astronaut.position.y += verticalVelocity.current * dt
+    astronaut.position.y += verticalVelocity.current * dt;
 
+    // Ground collision
     if (astronaut.position.y <= 0) {
-      astronaut.position.y = 0
-      verticalVelocity.current = 0
-      isGrounded.current = true
+      astronaut.position.y = 0;
+      verticalVelocity.current = 0;
+      isGrounded.current = true;
     }
 
+    // World boundaries
     astronaut.position.x = THREE.MathUtils.clamp(
       astronaut.position.x,
       -80,
       80,
-    )
+    );
 
     astronaut.position.z = THREE.MathUtils.clamp(
       astronaut.position.z,
       -80,
       80,
-    )
+    );
 
-    const distance = 8
-    const cameraHeight = 3.8 + pitch.current * 5
+    // Follow camera
+    const distance = 8;
+    const cameraHeight = 3.8 + pitch.current * 5;
 
     const desiredPosition = new THREE.Vector3(
       astronaut.position.x + Math.sin(yaw.current) * distance,
       astronaut.position.y + cameraHeight,
       astronaut.position.z + Math.cos(yaw.current) * distance,
-    )
+    );
 
     camera.position.lerp(
       desiredPosition,
       1 - Math.exp(-5 * dt),
-    )
+    );
 
     camera.lookAt(
       astronaut.position.x - Math.sin(yaw.current) * 2,
       astronaut.position.y + 1.4,
       astronaut.position.z - Math.cos(yaw.current) * 2,
-    )
-  })
+    );
+  });
 
   return (
     <group ref={player} position={[0, 0, 4]}>
       <Astronaut />
     </group>
-  )
+  );
 }
 
-function World() {
-  return (
-    <>
-      <color attach="background" args={['#080d20']} />
-      <fog attach="fog" args={['#986b60', 90, 240]} />
-
-      <ambientLight intensity={1.2} />
-      <hemisphereLight args={['#b7d2ff', '#79544d', 1.5]} />
-      <directionalLight
-        position={[-20, 35, 15]}
-        color="#ffe2c2"
-        intensity={3}
-        castShadow
-      />
-
-      <pointLight position={[0, 5, -8]} color="#55bfff" intensity={30} distance={45} />
-      <Stars radius={180} depth={100} count={7000} factor={3} saturation={0.2} fade speed={0.15} />
-
-      <Terrain />
-
-      <Habitat position={[-5, 0, -5]} label="HAB-01" />
-      <Habitat position={[-11, 0, -8]} label="HAB-02" />
-
-      <SolarFarm position={[3, 0, -10]} />
-      <CommunicationsTower />
-      <Rocks />
-      <FollowCamera />
-    </>
-  )
-}
 
 export default function App() {
+  const [colony, setColony] = useState<ColonyState>(() => createNewColony());
+  const [buildMode, setBuildMode] = useState(false);
+  const [selectedBuilding, setSelectedBuilding] =
+    useState<BuildingType>("solar");
+
+  const placeBuilding = useCallback(
+    (type: BuildingType, x: number, z: number, rotation: number) => {
+      setColony((current) =>
+        constructBuilding(current, type, x, z, rotation),
+      );
+    },
+    [],
+  );
+
+  const handleAdvanceSol = () => {
+    setColony((current) => advanceSol(current));
+  };
+
+  const resources = colony.resources;
+  const selectedDefinition = BUILDINGS[selectedBuilding];
+
+  const resourcePercent = (value: number) =>
+    Math.max(0, Math.min(100, value));
+
   return (
     <main className="game">
       <Canvas
         shadows
         dpr={[1, 1.5]}
         camera={{ position: [0, 5, 12], fov: 65, near: 0.1, far: 500 }}
-        gl={{ antialias: true, powerPreference: 'high-performance' }}
+        gl={{ antialias: true, powerPreference: "high-performance" }}
       >
-        <World />
+        <World
+          buildMode={buildMode}
+          selectedBuilding={selectedBuilding}
+          colony={colony}
+          onPlaceBuilding={placeBuilding}
+        />
       </Canvas>
 
       <header className="topbar">
@@ -524,7 +576,8 @@ export default function App() {
 
         <div className="mission">
           <span className="live-dot" />
-          MARS 2049 <span className="muted">/</span> SOL 01 OF 30
+          MARS 2049 <span className="muted">/</span> SOL{" "}
+          {String(colony.sol).padStart(2, "0")} OF 30
         </div>
 
         <div className="coordinates">
@@ -535,31 +588,56 @@ export default function App() {
 
       <aside className="left-panel">
         <small className="eyebrow">MISSION STATUS</small>
-        <h2>Establish<br />the outpost.</h2>
-        <p>Secure the base. Restore essential systems. Survive the Martian frontier.</p>
+        <h2>
+          {colony.status === "survived"
+            ? "Mission accomplished."
+            : colony.status === "failed"
+              ? "Mission compromised."
+              : buildMode
+                ? "Expand the outpost."
+                : "Establish the outpost."}
+        </h2>
+
+        <p>
+          {colony.status === "survived"
+            ? "Your colony survived the 30-sol mission."
+            : colony.status === "failed"
+              ? "An essential resource has run out. Review the colony report."
+              : "Secure the base. Restore essential systems. Survive the Martian frontier."}
+        </p>
 
         <div className="objective">
           <span className="objective-number">01</span>
           <div>
-            <strong>Reach the habitat</strong>
-            <small>Explore your surroundings</small>
+            <strong>Establish a habitat</strong>
+            <small>{colony.buildings.some((b) => b.type === "habitat") ? "CONSTRUCTED" : "REQUIRED"}</small>
           </div>
         </div>
 
         <div className="objective">
           <span className="objective-number">02</span>
           <div>
-            <strong>Inspect the solar farm</strong>
-            <small>Locate the power infrastructure</small>
+            <strong>Generate power</strong>
+            <small>{colony.buildings.some((b) => b.type === "solar") ? "ONLINE" : "REQUIRED"}</small>
+          </div>
+        </div>
+
+        <div className="objective">
+          <span className="objective-number">03</span>
+          <div>
+            <strong>Protect life support</strong>
+            <small>{colony.buildings.some((b) => b.type === "lifeSupport") ? "INSTALLED" : "REQUIRED"}</small>
           </div>
         </div>
 
         <div className="panel-divider" />
 
-        <small className="eyebrow">SUIT TELEMETRY</small>
-        <Resource label="OXYGEN" value="98%" percent={98} color="#65eaff" />
-        <Resource label="SUIT POWER" value="94%" percent={94} color="#a8a0ff" />
-        <Resource label="VITALS" value="100%" percent={100} color="#79e7ae" />
+        <small className="eyebrow">COLONY RESOURCES</small>
+        <Resource label="POWER" value={`${resources.power} kW`} percent={resourcePercent(resources.power)} color="#65eaff" />
+        <Resource label="OXYGEN" value={`${resources.oxygen}`} percent={resourcePercent(resources.oxygen)} color="#a8a0ff" />
+        <Resource label="WATER" value={`${resources.water}`} percent={resourcePercent(resources.water)} color="#5ebdff" />
+        <Resource label="FOOD" value={`${resources.food}`} percent={resourcePercent(resources.food)} color="#79e7ae" />
+        <Resource label="MATERIALS" value={`${resources.materials}`} percent={resourcePercent(resources.materials)} color="#f1b778" />
       </aside>
 
       <aside className="right-panel">
@@ -570,26 +648,79 @@ export default function App() {
 
         <div className="system">
           <span className="system-icon">⌁</span>
-          <div><strong>Life support</strong><small>STANDBY</small></div>
-          <i className="status-warning" />
+          <div>
+            <strong>Life support</strong>
+            <small>{colony.buildings.some((b) => b.type === "lifeSupport") ? "INSTALLED" : "STANDBY"}</small>
+          </div>
+          <i className={colony.buildings.some((b) => b.type === "lifeSupport") ? "status-good" : "status-warning"} />
         </div>
 
         <div className="system">
           <span className="system-icon">ϟ</span>
-          <div><strong>Power grid</strong><small>LOW OUTPUT</small></div>
-          <i className="status-warning" />
+          <div>
+            <strong>Power grid</strong>
+            <small>{colony.buildings.some((b) => b.type === "solar") ? "GENERATION AVAILABLE" : "LOW OUTPUT"}</small>
+          </div>
+          <i className={colony.buildings.some((b) => b.type === "solar") ? "status-good" : "status-warning"} />
         </div>
 
         <div className="system">
           <span className="system-icon">⌂</span>
-          <div><strong>Habitat</strong><small>PRESSURIZED</small></div>
-          <i className="status-good" />
+          <div>
+            <strong>Habitat</strong>
+            <small>{colony.buildings.some((b) => b.type === "habitat") ? "CONSTRUCTED" : "NOT ESTABLISHED"}</small>
+          </div>
+          <i className={colony.buildings.some((b) => b.type === "habitat") ? "status-good" : "status-warning"} />
         </div>
 
         <div className="credits">
           <small>AVAILABLE CREDITS</small>
-          <strong><span>◈</span> 600 <small>CR</small></strong>
+          <strong>
+            <span>◈</span> {resources.credits} <small>CR</small>
+          </strong>
         </div>
+
+        <div className="panel-divider" />
+
+        <small className="eyebrow">CONSTRUCTION</small>
+        <label htmlFor="building-select">SELECT STRUCTURE</label>
+        <select
+          id="building-select"
+          value={selectedBuilding}
+          onChange={(event) =>
+            setSelectedBuilding(event.target.value as BuildingType)
+          }
+          disabled={colony.status !== "building"}
+        >
+          {Object.values(BUILDINGS).map((building) => (
+            <option key={building.id} value={building.id}>
+              {building.name} — {building.cost} CR
+            </option>
+          ))}
+        </select>
+
+        <p>{selectedDefinition.description}</p>
+        <button
+          type="button"
+          onClick={() => setBuildMode((current) => !current)}
+          disabled={colony.status !== "building"}
+        >
+          {buildMode ? "EXIT BUILD MODE" : "ENTER BUILD MODE"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleAdvanceSol}
+          disabled={colony.status !== "building"}
+        >
+          ADVANCE TO NEXT SOL
+        </button>
+
+        {buildMode && (
+          <small>
+            MOVE MOUSE TO POSITION · CLICK TO PLACE · R TO ROTATE
+          </small>
+        )}
       </aside>
 
       <div className="location-tag">
@@ -604,17 +735,32 @@ export default function App() {
         <span />
       </div>
 
-      <footer className="bottom-bar">
-        <div className="controls">
-          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE</span>
-          <span><kbd>SHIFT</kbd> SPRINT</span>
-          <span><kbd>MOUSE</kbd> LOOK AROUND</span>
-          <span><kbd>ESC</kbd> RELEASE MOUSE</span>
+      {colony.event && (
+        <div className="mission-event">
+          <strong>MISSION ALERT</strong>
+          <p>{colony.event}</p>
         </div>
-        <div className="build-label">OUTPOST ZERO <span>·</span> FIELD BUILD 0.1</div>
-      </footer>
+      )}
+
+    
+<footer className="bottom-bar">
+  <div className="controls">
+    <span>
+      <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> MOVE
+    </span>
+    <span><kbd>SPACE</kbd> JUMP</span>
+    <span><kbd>Q</kbd> JETPACK / FLY</span>
+    <span><kbd>SHIFT</kbd> SPRINT</span>
+    <span><kbd>MOUSE</kbd> LOOK AROUND</span>
+    <span><kbd>ESC</kbd> RELEASE MOUSE</span>
+  </div>
+  <div className="build-label">
+    OUTPOST ZERO <span>·</span> FIELD BUILD 0.2
+  </div>
+</footer>
+
     </main>
-  )
+  );
 }
 
 function Resource({
@@ -623,22 +769,26 @@ function Resource({
   percent,
   color,
 }: {
-  label: string
-  value: string
-  percent: number
-  color: string
+  label: string;
+  value: string;
+  percent: number;
+  color: string;
 }) {
   return (
     <div className="resource">
       <div className="resource-label">
-        <span>{label}</span><strong>{value}</strong>
+        <span>{label}</span>
+        <strong>{value}</strong>
       </div>
       <div className="resource-track">
         <div
           className="resource-fill"
-          style={{ width: `${percent}%`, background: color }}
+          style={{
+            width: `${Math.max(0, Math.min(100, percent))}%`,
+            background: color,
+          }}
         />
       </div>
     </div>
-  )
+  );
 }
