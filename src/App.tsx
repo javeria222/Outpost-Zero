@@ -1,5 +1,4 @@
-
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
@@ -7,13 +6,12 @@ import "./App.css";
 
 import BuildMode from "./game/BuildMode";
 import {
-  BUILDINGS,
-  advanceSol,
-  constructBuilding,
-  createNewColony,
-  type BuildingType,
-  type ColonyState,
-} from "./game/colonySimulation";
+  STRUCTURE_CATALOGUE,
+  calculateNetRates,
+  type StructureId,
+} from "./game/simulateTick";
+import { useColonyStore } from "./game/useColonyStore";
+import { MISSION_OBJECTIVES } from "./game/missionObjectives";
 
 function Astronaut() {
   const body = useRef<THREE.Group>(null);
@@ -300,7 +298,6 @@ function Terrain() {
   );
 }
 
-
 function FollowCamera({ buildMode }: { buildMode: boolean }) {
   const { camera, gl } = useThree();
   const player = useRef<THREE.Group>(null);
@@ -328,9 +325,50 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       "ShiftRight",
     ];
 
+    const clearKeys = () => {
+      keys.current = {};
+    };
+
+    const handlePointerLockChange = () => {
+      clearKeys();
+      if (document.pointerLockElement !== canvas) {
+        canvas.blur();
+      }
+    };
+
+    const handleBlur = () => {
+      clearKeys();
+      canvas.blur();
+      if (document.pointerLockElement === canvas) {
+        document.exitPointerLock();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearKeys();
+        canvas.blur();
+        if (document.pointerLockElement === canvas) {
+          document.exitPointerLock();
+        }
+      }
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape") {
+        clearKeys();
+        canvas.blur();
+        if (document.pointerLockElement === canvas) {
+          document.exitPointerLock();
+        }
+        return;
+      }
+
       if (!controlledKeys.includes(event.code)) return;
-      if (buildMode) return;
+      if (buildMode || (document.pointerLockElement !== canvas && document.activeElement !== canvas)) {
+        clearKeys();
+        return;
+      }
 
       event.preventDefault();
       keys.current[event.code] = true;
@@ -338,10 +376,6 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
 
     const onKeyUp = (event: KeyboardEvent) => {
       keys.current[event.code] = false;
-    };
-
-    const clearKeys = () => {
-      keys.current = {};
     };
 
     const onMouseMove = (event: MouseEvent) => {
@@ -366,23 +400,31 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       }
     };
 
-
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", clearKeys);
-    document.addEventListener("visibilitychange", clearKeys);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("pointerlockchange", handlePointerLockChange);
+    document.addEventListener("pointerlockerror", handlePointerLockChange);
     window.addEventListener("mousemove", onMouseMove);
     canvas.addEventListener("click", onCanvasClick);
 
-    if (buildMode && document.pointerLockElement === canvas) {
-      document.exitPointerLock();
+    if (buildMode) {
+      clearKeys();
+      canvas.blur();
+      if (document.pointerLockElement === canvas) {
+        document.exitPointerLock();
+      }
     }
 
     return () => {
+      clearKeys();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", clearKeys);
-      document.removeEventListener("visibilitychange", clearKeys);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("pointerlockchange", handlePointerLockChange);
+      document.removeEventListener("pointerlockerror", handlePointerLockChange);
       window.removeEventListener("mousemove", onMouseMove);
       canvas.removeEventListener("click", onCanvasClick);
     };
@@ -392,6 +434,10 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
     const astronaut = player.current;
 
     if (!astronaut || buildMode) return;
+    if (document.pointerLockElement !== gl.domElement && document.activeElement !== gl.domElement) {
+      keys.current = {};
+      return;
+    }
 
     const dt = Math.min(delta, 0.05);
 
@@ -410,7 +456,6 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
 
     const movement = new THREE.Vector3();
 
-    // AZERTY: ZQSD
     if (keys.current.KeyW || keys.current.ArrowUp) {
       movement.add(forward);
     }
@@ -521,20 +566,21 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
   );
 }
 
-
 type WorldProps = {
   buildMode: boolean;
-  selectedBuilding: BuildingType;
-  colony: ColonyState;
-  onPlaceBuilding: (type: BuildingType, x: number, z: number, rotation: number) => void;
+  selectedBuilding: StructureId;
+  onPlaceBuilding: (type: StructureId, x: number, z: number, rotation: number) => void;
 };
 
 function World({
   buildMode,
   selectedBuilding,
-  colony,
   onPlaceBuilding,
 }: WorldProps) {
+  // Narrow selectors: only re-render when structures or materials change!
+  const structures = useColonyStore((s) => s.structures);
+  const materials = useColonyStore((s) => s.resources.materials);
+
   return (
     <>
       <color attach="background" args={["#080d20"]} />
@@ -565,8 +611,8 @@ function World({
       <BuildMode
         active={buildMode}
         selected={selectedBuilding}
-        buildings={colony.buildings}
-        credits={colony.resources.credits}
+        structures={structures}
+        materials={materials}
         onPlace={onPlaceBuilding}
       />
     </>
@@ -574,29 +620,122 @@ function World({
 }
 
 export default function App() {
-  const [colony, setColony] = useState<ColonyState>(() => createNewColony());
+  // Authoritative Colony Store
+  const sol = useColonyStore((s) => s.sol);
+  const resources = useColonyStore((s) => s.resources);
+  const structures = useColonyStore((s) => s.structures);
+  const alerts = useColonyStore((s) => s.alerts);
+  const alertHistory = useColonyStore((s) => s.alertHistory);
+  const missionStatus = useColonyStore((s) => s.missionStatus);
+  const simulationStatus = useColonyStore((s) => s.simulationStatus);
+  const speed = useColonyStore((s) => s.speed);
+  const failureReason = useColonyStore((s) => s.failureReason);
+
+  const placeStructure = useColonyStore((s) => s.placeStructure);
+  const tick = useColonyStore((s) => s.tick);
+  const setSpeed = useColonyStore((s) => s.setSpeed);
+  const setPaused = useColonyStore((s) => s.setPaused);
+  const togglePaused = useColonyStore((s) => s.togglePaused);
+  const skipSol = useColonyStore((s) => s.skipSol);
+  const resetMission = useColonyStore((s) => s.resetMission);
+  const markBuildModeOpened = useColonyStore((s) => s.markBuildModeOpened);
+
+  // Local UI State
   const [buildMode, setBuildMode] = useState(false);
-  const [selectedBuilding, setSelectedBuilding] =
-    useState<BuildingType>("solar");
+  const [selectedBuilding, setSelectedBuilding] = useState<StructureId>("solar_farm");
+  const [showHelp, setShowHelp] = useState(false);
+  const [objectiveIdleSeconds, setObjectiveIdleSeconds] = useState(0);
+
+  // Simulation tick loop (clamped, fixed 1s accumulator inside simulateTick)
+  useEffect(() => {
+    let lastTime = performance.now();
+    let animationFrameId: number;
+
+    const loop = (currentTime: number) => {
+      const rawDt = (currentTime - lastTime) / 1000;
+      lastTime = currentTime;
+
+      if (
+        !document.hidden &&
+        simulationStatus === "running" &&
+        missionStatus === "playing"
+      ) {
+        const effectiveDt = rawDt * speed;
+        tick(effectiveDt);
+      }
+
+      animationFrameId = requestAnimationFrame(loop);
+    };
+
+    animationFrameId = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [simulationStatus, missionStatus, speed, tick]);
+
+  // Dev Tool: Press 'K' to skip 1 SOL, 'H' for Help
+  useEffect(() => {
+    const onDevKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "KeyK") {
+        skipSol();
+      }
+      if (e.code === "KeyH") {
+        setShowHelp((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onDevKeyDown);
+    return () => window.removeEventListener("keydown", onDevKeyDown);
+  }, [skipSol]);
+
+  const rates = useMemo(() => calculateNetRates(structures), [structures]);
+
+  // Active Objective calculation
+  const storeState = useColonyStore.getState();
+  const rawObjectiveIndex = MISSION_OBJECTIVES.findIndex((obj) => !obj.isCompleted(storeState));
+  const currentObjectiveIndex = rawObjectiveIndex === -1 ? MISSION_OBJECTIVES.length - 1 : rawObjectiveIndex;
+
+  // Track 20s idle time for the active objective
+  const prevObjectiveIndexRef = useRef(currentObjectiveIndex);
+  useEffect(() => {
+    if (prevObjectiveIndexRef.current !== currentObjectiveIndex) {
+      prevObjectiveIndexRef.current = currentObjectiveIndex;
+      setObjectiveIdleSeconds(0);
+    }
+
+    const interval = setInterval(() => {
+      if (simulationStatus === "running" && missionStatus === "playing") {
+        setObjectiveIdleSeconds((s) => s + 1);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [currentObjectiveIndex, simulationStatus, missionStatus]);
 
   const placeBuilding = useCallback(
-    (type: BuildingType, x: number, z: number, rotation: number) => {
-      setColony((current) =>
-        constructBuilding(current, type, x, z, rotation),
-      );
+    (type: StructureId, x: number, z: number, rotation: number) => {
+      placeStructure(type, x, z, rotation);
     },
-    [],
+    [placeStructure],
   );
 
-  const handleAdvanceSol = () => {
-    setColony((current) => advanceSol(current));
+  const toggleBuildMode = () => {
+    setBuildMode((prev) => {
+      const next = !prev;
+      if (next) {
+        markBuildModeOpened();
+      }
+      return next;
+    });
   };
 
-  const resources = colony.resources;
-  const selectedDefinition = BUILDINGS[selectedBuilding];
+  const selectedDef = STRUCTURE_CATALOGUE[selectedBuilding];
+  const buildCatalogue = Object.values(STRUCTURE_CATALOGUE).filter(
+    (s) => s.visibleInMenu,
+  );
 
-  const resourcePercent = (value: number) =>
-    Math.max(0, Math.min(100, value));
+  const resourcePercent = (value: number, max = 500) =>
+    Math.max(0, Math.min(100, (value / max) * 100));
 
   return (
     <main className="game">
@@ -611,7 +750,6 @@ export default function App() {
         <World
           buildMode={buildMode}
           selectedBuilding={selectedBuilding}
-          colony={colony}
           onPlaceBuilding={placeBuilding}
         />
       </Canvas>
@@ -621,28 +759,53 @@ export default function App() {
           <span className="brand-mark">O</span>
           <div>
             <strong>OUTPOST ZERO</strong>
-            <small>MARS COLONIZATION PROGRAM</small>
+            <small>NASA JUNIOR ASTRONAUT MISSION TRAINER</small>
           </div>
         </div>
 
         <div className="mission">
           <span className="live-dot" />
           MARS 2049 <span className="muted">/</span> SOL{" "}
-          {String(colony.sol).padStart(2, "0")} OF 30
+          {String(sol).padStart(2, "0")} OF 05
+          <span className="muted" style={{ marginLeft: "8px" }}>
+            ({simulationStatus === "paused" ? "PAUSED" : `${speed}× SPEED`})
+          </span>
         </div>
 
-        <div className="coordinates">
-          <span>18.4° N</span>
-          <small>ARCADIA PLANITIA</small>
+        <div className="topbar-controls">
+          <button
+            type="button"
+            className="help-btn"
+            onClick={() => setShowHelp(true)}
+          >
+            ? CONTROLS
+          </button>
+          <div className="coordinates">
+            <span>18.4° N</span>
+            <small>ARCADIA PLANITIA</small>
+          </div>
         </div>
       </header>
 
+      {/* Structured Alerts Banner */}
+      {alerts.length > 0 && (
+        <div className="alerts-container">
+          {alerts.map((alert) => (
+            <div key={alert.id} className={`alert-item ${alert.severity}`}>
+              <strong>{alert.severity}: {alert.system}</strong>
+              <p>{alert.reason}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Left Panel: Mission Objectives & Live Resource Telemetry */}
       <aside className="left-panel">
-        <small className="eyebrow">MISSION STATUS</small>
+        <small className="eyebrow">MISSION OBJECTIVES</small>
         <h2>
-          {colony.status === "survived"
+          {missionStatus === "victory"
             ? "Mission accomplished."
-            : colony.status === "failed"
+            : missionStatus === "failed"
               ? "Mission compromised."
               : buildMode
                 ? "Expand the outpost."
@@ -650,84 +813,131 @@ export default function App() {
         </h2>
 
         <p>
-          {colony.status === "survived"
-            ? "Your colony survived the 30-sol mission."
-            : colony.status === "failed"
-              ? "An essential resource has run out. Review the colony report."
-              : "Secure the base. Restore essential systems. Survive the Martian frontier."}
+          {missionStatus === "victory"
+            ? "Your colony survived through Sol 5."
+            : missionStatus === "failed"
+              ? "A critical life-support deficit compromised the mission."
+              : "Follow mission protocols. Establish self-sufficient Mars life support."}
         </p>
 
-        <div className="objective">
-          <span className="objective-number">01</span>
-          <div>
-            <strong>Establish a habitat</strong>
-            <small>{colony.buildings.some((b) => b.type === "habitat") ? "CONSTRUCTED" : "REQUIRED"}</small>
-          </div>
-        </div>
+        {MISSION_OBJECTIVES.map((obj, i) => {
+          const isDone = obj.isCompleted(storeState);
+          const isCurrent = i === currentObjectiveIndex;
 
-        <div className="objective">
-          <span className="objective-number">02</span>
-          <div>
-            <strong>Generate power</strong>
-            <small>{colony.buildings.some((b) => b.type === "solar") ? "ONLINE" : "REQUIRED"}</small>
-          </div>
-        </div>
-
-        <div className="objective">
-          <span className="objective-number">03</span>
-          <div>
-            <strong>Protect life support</strong>
-            <small>{colony.buildings.some((b) => b.type === "lifeSupport") ? "INSTALLED" : "REQUIRED"}</small>
-          </div>
-        </div>
+          return (
+            <div key={obj.id} className="objective objective-item">
+              <span className="objective-number">{obj.stepNumber}</span>
+              <div>
+                <strong>{obj.title}</strong>
+                <small style={{ color: isDone ? "#79e7ae" : isCurrent ? "#65eaff" : "#6c8299" }}>
+                  {isDone ? "COMPLETE" : isCurrent ? "IN PROGRESS" : "STANDBY"}
+                </small>
+                <span className="objective-why">{obj.whyThisMatters}</span>
+                {isCurrent && !isDone && objectiveIdleSeconds >= 20 && (
+                  <span className="objective-hint">Tip: {obj.hint}</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
 
         <div className="panel-divider" />
 
         <small className="eyebrow">COLONY RESOURCES</small>
-        <Resource label="POWER" value={`${resources.power} kW`} percent={resourcePercent(resources.power)} color="#65eaff" />
-        <Resource label="OXYGEN" value={`${resources.oxygen}`} percent={resourcePercent(resources.oxygen)} color="#a8a0ff" />
-        <Resource label="WATER" value={`${resources.water}`} percent={resourcePercent(resources.water)} color="#5ebdff" />
-        <Resource label="FOOD" value={`${resources.food}`} percent={resourcePercent(resources.food)} color="#79e7ae" />
-        <Resource label="MATERIALS" value={`${resources.materials}`} percent={resourcePercent(resources.materials)} color="#f1b778" />
+        <Resource
+          label="POWER"
+          value={`${Math.round(resources.energy)} kW`}
+          delta={`${rates.netEnergyPerSol >= 0 ? "+" : ""}${Math.round(rates.netEnergyPerSol)} kW/SOL`}
+          deltaClass={rates.netEnergyPerSol >= 0 ? "positive" : "negative"}
+          percent={resourcePercent(resources.energy, 300)}
+          color="#65eaff"
+        />
+        <Resource
+          label="OXYGEN"
+          value={`${Math.round(resources.oxygen)} kg`}
+          delta={`${rates.netOxygenPerSol >= 0 ? "+" : ""}${Math.round(rates.netOxygenPerSol)} kg/SOL`}
+          deltaClass={rates.netOxygenPerSol >= 0 ? "positive" : "negative"}
+          percent={resourcePercent(resources.oxygen, 500)}
+          color="#a8a0ff"
+        />
+        <Resource
+          label="FOOD"
+          value={`${Math.round(resources.food)} rations`}
+          delta={`${rates.netFoodPerSol >= 0 ? "+" : ""}${Math.round(rates.netFoodPerSol)} /SOL`}
+          deltaClass={rates.netFoodPerSol >= 0 ? "positive" : "negative"}
+          percent={resourcePercent(resources.food, 500)}
+          color="#79e7ae"
+        />
+        <Resource
+          label="MATERIALS"
+          value={`${Math.round(resources.materials)} MAT`}
+          delta="STOCK"
+          deltaClass="neutral"
+          percent={resourcePercent(resources.materials, 800)}
+          color="#f1b778"
+        />
+
+        <span className="simulation-note">
+          * Gameplay simulation abstraction for Junior Astronaut Mission Trainer.
+        </span>
       </aside>
 
+      {/* Right Panel: Network & Construction */}
       <aside className="right-panel">
         <div className="status-heading">
           <span className="live-dot" />
-          OUTPOST NETWORK
+          OUTPOST SYSTEMS
         </div>
 
         <div className="system">
           <span className="system-icon">⌁</span>
           <div>
-            <strong>Life support</strong>
-            <small>{colony.buildings.some((b) => b.type === "lifeSupport") ? "INSTALLED" : "STANDBY"}</small>
+            <strong>Life Support (O2)</strong>
+            <small>
+              {structures.some((s) => s.structureId === "oxygen_generator" && s.active)
+                ? "MOXIE ONLINE (+40/SOL)"
+                : "OFFLINE (CREW DEMAND −32)"}
+            </small>
           </div>
-          <i className={colony.buildings.some((b) => b.type === "lifeSupport") ? "status-good" : "status-warning"} />
+          <i
+            className={
+              structures.some((s) => s.structureId === "oxygen_generator" && s.active)
+                ? "status-good"
+                : "status-warning"
+            }
+          />
         </div>
 
         <div className="system">
           <span className="system-icon">ϟ</span>
           <div>
-            <strong>Power grid</strong>
-            <small>{colony.buildings.some((b) => b.type === "solar") ? "GENERATION AVAILABLE" : "LOW OUTPUT"}</small>
+            <strong>Power Grid</strong>
+            <small>
+              {rates.netEnergyPerSol >= 0
+                ? `NET POSITIVE (+${Math.round(rates.netEnergyPerSol)} kW)`
+                : `DEFICIT (${Math.round(rates.netEnergyPerSol)} kW/SOL)`}
+            </small>
           </div>
-          <i className={colony.buildings.some((b) => b.type === "solar") ? "status-good" : "status-warning"} />
+          <i
+            className={rates.netEnergyPerSol >= 0 ? "status-good" : "status-warning"}
+          />
         </div>
 
         <div className="system">
           <span className="system-icon">⌂</span>
           <div>
-            <strong>Habitat</strong>
-            <small>{colony.buildings.some((b) => b.type === "habitat") ? "CONSTRUCTED" : "NOT ESTABLISHED"}</small>
+            <strong>Habitat Capacity</strong>
+            <small>{rates.habitatCapacity} / 4 CREW SHELTERED</small>
           </div>
-          <i className={colony.buildings.some((b) => b.type === "habitat") ? "status-good" : "status-warning"} />
+          <i
+            className={rates.habitatCapacity >= 4 ? "status-good" : "status-warning"}
+          />
         </div>
 
         <div className="credits">
-          <small>AVAILABLE CREDITS</small>
+          <small>AVAILABLE MATERIALS</small>
           <strong>
-            <span>◈</span> {resources.credits} <small>CR</small>
+            <span>◈</span> {resources.materials} <small>MAT</small>
           </strong>
         </div>
 
@@ -739,37 +949,70 @@ export default function App() {
           id="building-select"
           value={selectedBuilding}
           onChange={(event) =>
-            setSelectedBuilding(event.target.value as BuildingType)
+            setSelectedBuilding(event.target.value as StructureId)
           }
-          disabled={colony.status !== "building"}
+          disabled={missionStatus !== "playing"}
         >
-          {Object.values(BUILDINGS).map((building) => (
+          {buildCatalogue.map((building) => (
             <option key={building.id} value={building.id}>
-              {building.name} — {building.cost} CR
+              {building.name} — {building.buildCost.materials} MAT
             </option>
           ))}
         </select>
 
-        <p>{selectedDefinition.description}</p>
+        {selectedDef && (
+          <>
+            <p>{selectedDef.description}</p>
+            <small style={{ color: "#79e7ae", display: "block", marginBottom: "8px" }}>
+              Effects:{" "}
+              {Object.entries(selectedDef.effects)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(", ")}
+            </small>
+          </>
+        )}
+
         <button
           type="button"
-          onClick={() => setBuildMode((current) => !current)}
-          disabled={colony.status !== "building"}
+          onClick={toggleBuildMode}
+          disabled={missionStatus !== "playing"}
         >
           {buildMode ? "EXIT BUILD MODE" : "ENTER BUILD MODE"}
         </button>
 
-        <button
-          type="button"
-          onClick={handleAdvanceSol}
-          disabled={colony.status !== "building"}
-        >
-          ADVANCE TO NEXT SOL
-        </button>
+        <div className="sim-controls">
+          <button
+            type="button"
+            className={simulationStatus === "paused" ? "active" : ""}
+            onClick={togglePaused}
+          >
+            {simulationStatus === "paused" ? "▶ RESUME" : "❚❚ PAUSE"}
+          </button>
+          <button
+            type="button"
+            className={speed === 1 && simulationStatus === "running" ? "active" : ""}
+            onClick={() => {
+              setSpeed(1);
+              setPaused(false);
+            }}
+          >
+            1×
+          </button>
+          <button
+            type="button"
+            className={speed === 3 && simulationStatus === "running" ? "active" : ""}
+            onClick={() => {
+              setSpeed(3);
+              setPaused(false);
+            }}
+          >
+            3×
+          </button>
+        </div>
 
         {buildMode && (
-          <small>
-            MOVE MOUSE TO POSITION · CLICK TO PLACE · R TO ROTATE
+          <small style={{ marginTop: "10px" }}>
+            CLICK GROUND TO PLACE · R TO ROTATE · ESC TO CANCEL
           </small>
         )}
       </aside>
@@ -786,30 +1029,142 @@ export default function App() {
         <span />
       </div>
 
-      {colony.event && (
-        <div className="mission-event">
-          <strong>MISSION ALERT</strong>
-          <p>{colony.event}</p>
+      <footer className="bottom-bar">
+        <div className="controls">
+          <span>
+            <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE
+          </span>
+          <span><kbd>SPACE</kbd> JUMP</span>
+          <span><kbd>E</kbd> JETPACK / FLY</span>
+          <span><kbd>SHIFT</kbd> SPRINT</span>
+          <span><kbd>MOUSE</kbd> LOOK AROUND</span>
+          <span><kbd>ESC</kbd> RELEASE MOUSE</span>
+          <span><kbd>K</kbd> SKIP SOL (DEV)</span>
+        </div>
+        <div className="build-label">
+          OUTPOST ZERO <span>·</span> RELEASE CANDIDATE 1.0
+        </div>
+      </footer>
+
+      {/* End-Game Debrief Modal (Victory / Defeat) */}
+      {missionStatus !== "playing" && (
+        <div className="mission-modal-overlay">
+          <div className={`mission-modal ${missionStatus}`}>
+            <h2>
+              {missionStatus === "victory"
+                ? "MISSION ACCOMPLISHED"
+                : "MISSION COMPROMISED"}
+            </h2>
+            <p>
+              {missionStatus === "victory"
+                ? "Junior Astronaut Certification Achieved! You sustained all essential life support, power, and communications through 5 Martian Sols."
+                : failureReason || "The colony sustained critical resource depletion."}
+            </p>
+
+            <div className="modal-details">
+              <strong>MISSION TELEMETRY SUMMARY</strong>
+              <ul>
+                <li>Sols Survived: {sol} of 05</li>
+                <li>Final Oxygen: {Math.round(resources.oxygen)} kg</li>
+                <li>Final Power: {Math.round(resources.energy)} kW</li>
+                <li>Final Food: {Math.round(resources.food)} rations</li>
+                <li>Remaining Materials: {Math.round(resources.materials)} MAT</li>
+                <li>Total Structures Built: {structures.length}</li>
+              </ul>
+              {alertHistory.length > 0 && (
+                <>
+                  <strong style={{ display: "block", marginTop: "10px" }}>
+                    MISSION INCIDENT LOG
+                  </strong>
+                  <ul>
+                    {alertHistory.map((h) => (
+                      <li key={h.id}>
+                        [{h.severity.toUpperCase()}] {h.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  resetMission();
+                  setBuildMode(false);
+                }}
+              >
+                RETRY MISSION
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-    
-<footer className="bottom-bar">
-  <div className="controls">
-    <span>
-      <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> MOVE
-    </span>
-    <span><kbd>SPACE</kbd> JUMP</span>
-    <span><kbd>Q</kbd> JETPACK / FLY</span>
-    <span><kbd>SHIFT</kbd> SPRINT</span>
-    <span><kbd>MOUSE</kbd> LOOK AROUND</span>
-    <span><kbd>ESC</kbd> RELEASE MOUSE</span>
-  </div>
-  <div className="build-label">
-    OUTPOST ZERO <span>·</span> FIELD BUILD 0.2
-  </div>
-</footer>
+      {/* Controls Help Modal */}
+      {showHelp && (
+        <div className="mission-modal-overlay" onClick={() => setShowHelp(false)}>
+          <div
+            className="mission-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "500px" }}
+          >
+            <h2>ASTRONAUT FIELD MANUAL</h2>
+            <p>
+              Junior Astronaut Mission Trainer keyboard & mouse reference.
+            </p>
 
+            <table className="controls-table">
+              <tbody>
+                <tr>
+                  <td>W / A / S / D or ARROWS</td>
+                  <td>Surface traversal & exploration</td>
+                </tr>
+                <tr>
+                  <td>SHIFT</td>
+                  <td>Sprint booster</td>
+                </tr>
+                <tr>
+                  <td>SPACE</td>
+                  <td>EVA suit thruster jump</td>
+                </tr>
+                <tr>
+                  <td>E (Hold)</td>
+                  <td>Continuous flight / aerial survey</td>
+                </tr>
+                <tr>
+                  <td>MOUSE (Left Click)</td>
+                  <td>Engage camera look / Place structure in build mode</td>
+                </tr>
+                <tr>
+                  <td>R</td>
+                  <td>Rotate structure 90° during placement</td>
+                </tr>
+                <tr>
+                  <td>ESC</td>
+                  <td>Release mouse look / Cancel placement</td>
+                </tr>
+                <tr>
+                  <td>K</td>
+                  <td>Skip 1 Sol (Trainer Dev Tool)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="modal-actions" style={{ marginTop: "20px" }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setShowHelp(false)}
+              >
+                RESUME MISSION
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -817,11 +1172,15 @@ export default function App() {
 function Resource({
   label,
   value,
+  delta,
+  deltaClass,
   percent,
   color,
 }: {
   label: string;
   value: string;
+  delta?: string;
+  deltaClass?: string;
   percent: number;
   color: string;
 }) {
@@ -829,7 +1188,14 @@ function Resource({
     <div className="resource">
       <div className="resource-label">
         <span>{label}</span>
-        <strong>{value}</strong>
+        <div>
+          <strong>{value}</strong>
+          {delta && (
+            <span className={`resource-delta ${deltaClass ?? "neutral"}`}>
+              {delta}
+            </span>
+          )}
+        </div>
       </div>
       <div className="resource-track">
         <div

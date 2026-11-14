@@ -1,29 +1,30 @@
-
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import type { BuildingType } from "./colonySimulation";
 import {
-  BUILDINGS,
-  type BuildingType,
-  type PlacedBuilding,
-} from "./colonySimulation";
+  BUILD_RADIUS,
+  STRUCTURE_CATALOGUE,
+  WORLD_BOUND,
+  type PlacedStructure,
+  type StructureId,
+} from "./simulateTick";
 
 type BuildModeProps = {
   active: boolean;
-  selected: BuildingType;
-  buildings: PlacedBuilding[];
-  credits: number;
-  onPlace: (type: BuildingType, x: number, z: number, rotation: number) => void;
+  selected: StructureId;
+  structures: PlacedStructure[];
+  materials: number;
+  onPlace: (type: StructureId, x: number, z: number, rotation: number) => void;
 };
 
 const GRID = 2;
-const BUILD_RADIUS = 3.5;
 
 function snap(value: number) {
   return Math.round(value / GRID) * GRID;
 }
 
-function Structure({ type }: { type: BuildingType }) {
+export function Structure({ type }: { type: BuildingType }) {
   const common = { castShadow: true, receiveShadow: true };
 
   switch (type) {
@@ -156,15 +157,18 @@ function Structure({ type }: { type: BuildingType }) {
 }
 
 function GhostStructure({
-  type,
+  structureId,
   valid,
 }: {
-  type: BuildingType;
+  structureId: StructureId;
   valid: boolean;
 }) {
+  const def = STRUCTURE_CATALOGUE[structureId];
+  const meshType = def?.meshType ?? "habitat";
+
   return (
     <group>
-      <Structure type={type} />
+      <Structure type={meshType} />
       <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[1.9, 2.1, 32]} />
         <meshBasicMaterial
@@ -181,30 +185,32 @@ function GhostStructure({
 export default function BuildMode({
   active,
   selected,
-  buildings,
-  credits,
+  structures,
+  materials,
   onPlace,
 }: BuildModeProps) {
   const { camera, gl } = useThree();
   const [position, setPosition] = useState<[number, number, number] | null>(null);
   const [rotation, setRotation] = useState(0);
+  const placingRef = useRef(false);
 
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const ground = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
   const target = useMemo(() => new THREE.Vector3(), []);
 
-  const affordable = credits >= BUILDINGS[selected].cost;
+  const def = STRUCTURE_CATALOGUE[selected];
+  const affordable = Boolean(def && materials >= def.buildCost.materials);
 
   const valid = useMemo(() => {
     if (!position || !affordable) return false;
 
     const [x, , z] = position;
-    if (Math.abs(x) > 45 || Math.abs(z) > 45) return false;
+    if (Math.abs(x) > WORLD_BOUND || Math.abs(z) > WORLD_BOUND) return false;
 
-    return !buildings.some(
-      (building) => Math.hypot(building.x - x, building.z - z) < BUILD_RADIUS,
+    return !structures.some(
+      (s) => Math.hypot(s.x - x, s.z - z) < BUILD_RADIUS,
     );
-  }, [position, buildings, affordable]);
+  }, [position, structures, affordable]);
 
   useEffect(() => {
     if (!active) {
@@ -245,21 +251,30 @@ export default function BuildMode({
 
     const onClick = (event: MouseEvent) => {
       if (event.button !== 0) return;
+      if (placingRef.current) return;
 
-      // Calculate placement from the actual click, not a stale mouse position.
       const clicked = getGroundPosition(event);
       if (!clicked) return;
 
       const [x, , z] = clicked;
-      if (Math.abs(x) > 45 || Math.abs(z) > 45) return;
-      if (credits < BUILDINGS[selected].cost) return;
+      if (Math.abs(x) > WORLD_BOUND || Math.abs(z) > WORLD_BOUND) return;
 
-      const occupied = buildings.some(
-        (building) => Math.hypot(building.x - x, building.z - z) < BUILD_RADIUS,
+      const currentDef = STRUCTURE_CATALOGUE[selected];
+      if (!currentDef || materials < currentDef.buildCost.materials) return;
+
+      const occupied = structures.some(
+        (s) => Math.hypot(s.x - x, s.z - z) < BUILD_RADIUS,
       );
       if (occupied) return;
 
-      onPlace(selected, x, z, rotation);
+      placingRef.current = true;
+      try {
+        onPlace(selected, x, z, rotation);
+      } finally {
+        setTimeout(() => {
+          placingRef.current = false;
+        }, 150);
+      }
     };
 
     window.addEventListener("mousemove", onMove);
@@ -278,29 +293,33 @@ export default function BuildMode({
     gl,
     ground,
     onPlace,
-    buildings,
+    structures,
     selected,
     rotation,
     raycaster,
     target,
-    credits,
+    materials,
   ]);
 
   return (
     <group>
-      {buildings.map((building) => (
-        <group
-          key={building.instanceId}
-          position={[building.x, 0, building.z]}
-          rotation={[0, building.rotation, 0]}
-        >
-          <Structure type={building.type} />
-        </group>
-      ))}
+      {structures.map((s) => {
+        const sDef = STRUCTURE_CATALOGUE[s.structureId];
+        const meshType = sDef?.meshType ?? "habitat";
+        return (
+          <group
+            key={s.instanceId}
+            position={[s.x, 0, s.z]}
+            rotation={[0, s.rotation, 0]}
+          >
+            <Structure type={meshType} />
+          </group>
+        );
+      })}
 
       {active && position && (
         <group position={position} rotation={[0, rotation, 0]}>
-          <GhostStructure type={selected} valid={valid} />
+          <GhostStructure structureId={selected} valid={valid} />
         </group>
       )}
     </group>
