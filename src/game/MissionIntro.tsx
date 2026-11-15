@@ -2,15 +2,50 @@ import { useEffect, useRef, useState } from "react";
 
 const CINEMATIC_URL = `${import.meta.env.BASE_URL}cinematics/outpost-zero-earth-to-mars.mp4`;
 
+export function MissionBriefing({ onBegin }: { onBegin: () => void }) {
+  return <main className="controls-briefing" aria-label="Outpost Zero mission briefing">
+    <aside className="briefing-orbit" aria-label="Mars mission location">
+      <div className="briefing-planet" aria-hidden="true" />
+      <span>ASTRAX SPACE PROGRAM</span>
+      <i>MISSION BRIEFING / MARS 01</i>
+    </aside>
+    <section className="briefing-content" aria-labelledby="briefing-title">
+      <span className="eyebrow">MISSION CONTROL / ARCADIA PLANITIA</span>
+      <h1 id="briefing-title">OUTPOST <em>ZERO</em></h1>
+      <p>Establish a sustainable Mars colony, protect the four-person crew, and keep life support running through SOL 6.</p>
+      <div className="control-grid" aria-label="Basic mission controls">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><b>MOVE / LOOK</b><small>WASD or arrows move immediately. Click the scene to capture the mouse for looking.</small></div>
+        <div><kbd>E</kbd><b>MOVEMENT MODE</b><small>E toggles vertical movement. Space ascends; Shift descends.</small></div>
+        <div><kbd>BUILD</kbd><b>CONSTRUCT</b><small>Open the build menu, choose and place structures.</small></div>
+        <div><kbd>ESC</kbd><kbd>H</kbd><b>FIELD MANUAL</b><small>ESC releases the mouse and opens the paused field manual. H toggles it.</small></div>
+      </div>
+      <div className="briefing-actions">
+        <button className="briefing-primary" type="button" onClick={onBegin}>BEGIN MISSION <span>→</span></button>
+      </div>
+    </section>
+  </main>;
+}
+
 export function MissionIntro({ onComplete }: { onComplete: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const finishTimer = useRef<number | null>(null);
   const finishStarted = useRef(false);
   const playStarted = useRef(false);
+  const playbackBlockedRef = useRef(false);
   const [assetReady, setAssetReady] = useState(false);
   const [assetFailed, setAssetFailed] = useState(false);
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(0.8);
+
+  const markPlaybackStarted = () => {
+    playbackBlockedRef.current = false;
+    setPlaybackBlocked(false);
+    setAssetFailed(false);
+    setAssetReady(true);
+  };
 
   useEffect(() => () => {
     if (finishTimer.current !== null) window.clearTimeout(finishTimer.current);
@@ -18,12 +53,21 @@ export function MissionIntro({ onComplete }: { onComplete: () => void }) {
 
   const startPlayback = () => {
     const player = video.current;
-    if (!player || finishing || playStarted.current) return;
+    if (!player || finishing || playStarted.current || playbackBlockedRef.current) return;
     playStarted.current = true;
+    player.volume = volume;
+    player.muted = muted;
     void player.play().then(() => {
-      setAssetReady(true);
-      setAssetFailed(false);
-    }).catch(() => setAssetFailed(true));
+      markPlaybackStarted();
+    }).catch((error: unknown) => {
+      playStarted.current = false;
+      if (error instanceof Error && error.name === "NotAllowedError") {
+        playbackBlockedRef.current = true;
+        setPlaybackBlocked(true);
+        return;
+      }
+      setAssetFailed(true);
+    });
   };
 
   const finishIntro = () => {
@@ -33,17 +77,55 @@ export function MissionIntro({ onComplete }: { onComplete: () => void }) {
     finishTimer.current = window.setTimeout(onComplete, 520);
   };
 
+  const toggleSound = () => {
+    const nextMuted = !muted;
+    if (video.current) video.current.muted = nextMuted;
+    setMuted(nextMuted);
+  };
+
+  const changeVolume = (nextVolume: number) => {
+    if (video.current) video.current.volume = nextVolume;
+    setVolume(nextVolume);
+  };
+
+  const playWithSound = () => {
+    const player = video.current;
+    if (!player) return;
+    const audibleVolume = volume > 0 ? volume : 0.8;
+    playbackBlockedRef.current = false;
+    playStarted.current = true;
+    setPlaybackBlocked(false);
+    setAssetFailed(false);
+    setMuted(false);
+    if (volume === 0) setVolume(audibleVolume);
+    player.muted = false;
+    player.volume = audibleVolume;
+    player.currentTime = 0;
+    void player.play().then(() => {
+      markPlaybackStarted();
+    }).catch((error: unknown) => {
+      playStarted.current = false;
+      if (error instanceof Error && error.name === "NotAllowedError") {
+        playbackBlockedRef.current = true;
+        setPlaybackBlocked(true);
+        return;
+      }
+      setAssetFailed(true);
+    });
+  };
+
   return <section className={`mission-intro${finishing ? " finishing" : ""}`} aria-label="Earth to Mars mission introduction">
     <video
       ref={video}
       className={`intro-video${assetReady ? " ready" : ""}`}
       src={CINEMATIC_URL}
       autoPlay
-      muted
+      muted={muted}
       playsInline
       preload="auto"
       onCanPlay={startPlayback}
       onLoadedData={startPlayback}
+      onPlaying={markPlaybackStarted}
       onError={() => setAssetFailed(true)}
       onEnded={finishIntro}
       onTimeUpdate={(event) => {
@@ -56,11 +138,14 @@ export function MissionIntro({ onComplete }: { onComplete: () => void }) {
     {!assetReady && <div className={`intro-asset-screen ${assetFailed ? "failed" : "loading"}`}>
       <div className="intro-asset-orbit" aria-hidden="true"><span /><i /></div>
       <span className="eyebrow">ASTRAX SPACE PROGRAM · MARS 01</span>
-      <h1>{assetFailed ? "CINEMATIC ASSET UNAVAILABLE" : "PREPARING MISSION FILM"}</h1>
+      <h1>{assetFailed ? "CINEMATIC ASSET UNAVAILABLE" : playbackBlocked ? "SOUND PLAYBACK NEEDS YOUR OK" : "PREPARING MISSION FILM"}</h1>
       <p>{assetFailed
         ? "The Earth-to-Mars master film could not be loaded or played. Skip this introduction to continue to your field briefing."
-        : "Preparing your Earth-to-Mars cinematic. Playback will begin automatically."}
+        : playbackBlocked
+          ? "This browser blocked autoplay with sound. Start the film from its opening with narration enabled."
+          : "Preparing your Earth-to-Mars cinematic. Playback will begin automatically."}
       </p>
+      {playbackBlocked && <button className="intro-play-with-sound" type="button" onClick={playWithSound}>PLAY CINEMATIC WITH SOUND <span>→</span></button>}
       {assetFailed && <><code>public/cinematics/outpost-zero-earth-to-mars.mp4</code>
       <small>No substitute footage is shown. Skip the introduction to continue.</small></>}
     </div>}
@@ -68,7 +153,31 @@ export function MissionIntro({ onComplete }: { onComplete: () => void }) {
     <div className="intro-playback-status" aria-live="polite">
       {assetReady ? "MISSION FILM · EARTH TO MARS" : assetFailed ? "MISSION FILM UNAVAILABLE" : "CHECKING CINEMATIC ASSET"}
     </div>
-    <button className="intro-skip" type="button" onClick={finishIntro} disabled={finishing}>SKIP INTRO <span>→</span></button>
+    <div className="intro-top-actions">
+      <div className="intro-audio-controls" role="group" aria-label="Cinematic sound controls">
+        <button
+          className="intro-sound-toggle"
+          type="button"
+          onClick={toggleSound}
+          aria-label={muted ? "Enable cinematic sound" : "Mute cinematic sound"}
+          aria-pressed={!muted}
+        >{muted ? "SOUND OFF" : "SOUND ON"}</button>
+        <label className="intro-volume-control">
+          <span>VOLUME</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={volume}
+            aria-label="Cinematic volume"
+            aria-valuetext={`${Math.round(volume * 100)} percent`}
+            onChange={(event) => changeVolume(Number(event.currentTarget.value))}
+          />
+        </label>
+      </div>
+      <button className="intro-skip" type="button" onClick={finishIntro} disabled={finishing}>SKIP INTRO <span>→</span></button>
+    </div>
     <div className="intro-progress"><i style={{ width: `${progress}%` }} /></div>
   </section>;
 }
@@ -86,7 +195,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   {
     label: "ARRIVAL",
     title: "WELCOME TO MARS",
-    eyebrow: "MISSION BRIEF · ELYSIUM PLANITIA",
+    eyebrow: "MISSION BRIEF ·ARCADIA PLANITIA",
     description: "You have arrived at Outpost Zero. Establish a sustainable colony, protect the four-person crew, and keep the settlement operational through SOL 6.",
     note: "Your outpost begins without shelter or life-support structures. Build the systems the crew depends on.",
     visual: "mars",
@@ -95,16 +204,16 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     label: "MOVEMENT",
     title: "MOVE THROUGH THE OUTPOST",
     eyebrow: "EVA FIELD GUIDE · 01",
-    description: "Use WASD to walk and the mouse to look around. Arrow keys also move. Click the Mars scene to capture the mouse for camera look.",
-    note: "Outside Build Mode, ESC pauses, releases the camera, and opens this manual. In Build Mode, ESC cancels the placement preview. Click the scene to recapture the mouse.",
+    description: "WASD or the arrow keys move immediately; no scene click is needed. To look around, click the 3D Mars scene to capture the mouse, then move it.",
+    note: "ESC releases the mouse and opens this manual, pausing mission time and astronaut movement. H toggles the manual. Click the scene again whenever you want mouse look.",
     visual: "move",
   },
   {
-    label: "FLIGHT",
-    title: "TAKE FLIGHT",
+    label: "ALTITUDE",
+    title: "CONTROL YOUR ALTITUDE",
     eyebrow: "EVA FIELD GUIDE · 02",
-    description: "Press E once to enter flight mode. Space ascends; Shift descends. Releasing either key holds your altitude. Press E again to land safely.",
-    note: "On foot, Space jumps and Shift sprints. ESC, pointer-lock loss, Build Mode, or switching tabs clears held keys and lands you safely.",
+    description: "Press E to toggle Movement Mode. Space ascends; Shift descends. Releasing either key holds your altitude. Press E again to return safely to the surface.",
+    note: "On foot, Space jumps and Shift sprints. Releasing a movement key stops it. Pausing, opening help, entering Build Mode, losing focus, or switching tabs clears held keys and lands you safely.",
     visual: "flight",
   },
   {
@@ -112,7 +221,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     title: "BUILD THE SYSTEMS YOU NEED",
     eyebrow: "COLONY OPERATIONS · 01",
     description: "Choose ENTER BUILD MODE, select a structure, and review its material cost in the panel. Click suitable open ground to place it; press R to rotate the preview.",
-    note: "Invalid or overlapping sites are rejected. Materials are charged only when a structure is successfully placed.",
+    note: "ESC cancels the current placement preview. Invalid or overlapping sites are rejected; materials are charged only when a structure is successfully placed.",
     visual: "build",
   },
   {
@@ -135,25 +244,25 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     label: "PAUSE & HELP",
     title: "YOU CAN REVIEW THE FIELD MANUAL",
     eyebrow: "MISSION CONTROL · ALWAYS AVAILABLE",
-    description: "Press ESC during play to pause and open this guide. Press H or choose CONTROLS in the HUD to reopen the field manual at any time.",
-    note: "The game simulation pauses while this guide is open. Use REPLAY INTRO here to watch the Earth-to-Mars film again.",
+    description: "Press ESC to release the mouse, pause mission time, and open this guide. Press H or choose CONTROLS in the HUD to toggle the field manual.",
+    note: "Astronaut movement is suspended while the field manual or Pause state is active. Click the 3D scene to capture the mouse again for camera look. Use REPLAY INTRO here to watch the film again.",
     visual: "pause",
   },
 ];
 
 function TutorialVisual({ visual }: { visual: TutorialStep["visual"] }) {
   if (visual === "move") {
-    return <div className="tutorial-visual movement-visual" aria-label="WASD movement and mouse look diagram">
+    return <div className="tutorial-visual movement-visual" aria-label="WASD or arrow movement and captured mouse look diagram">
       <div className="wasd-diagram"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
-      <div className="mouse-diagram"><span /><i /><b>MOUSE LOOK</b></div>
-      <small>FIELD MOBILITY · DIRECTIONAL CONTROL</small>
+      <div className="mouse-diagram"><span /><i /><b>MOUSE LOOK</b><small>CLICK SCENE TO CAPTURE</small></div>
+      <small>WASD / ARROWS MOVE WITHOUT CLICKING</small>
     </div>;
   }
   if (visual === "flight") {
-    return <div className="tutorial-visual flight-visual" aria-label="Flight toggle, ascend, and descend controls">
+    return <div className="tutorial-visual flight-visual" aria-label="Movement mode toggle, ascend, and descend controls">
       <div className="flight-orbit"><i className="flight-dot" /><span>E</span></div>
-      <div className="flight-controls"><kbd>E</kbd><b>TOGGLE FLIGHT</b><kbd>SPACE</kbd><b>ASCEND</b><kbd>SHIFT</kbd><b>DESCEND</b></div>
-      <small>THRUSTER VECTOR · 120 M ALTITUDE LIMIT</small>
+      <div className="flight-controls"><kbd>E</kbd><b>MOVEMENT MODE</b><kbd>SPACE</kbd><b>ASCEND</b><kbd>SHIFT</kbd><b>DESCEND</b></div>
+      <small>VERTICAL MOVEMENT · 120 M ALTITUDE LIMIT</small>
     </div>;
   }
   if (visual === "build") {
@@ -180,8 +289,8 @@ function TutorialVisual({ visual }: { visual: TutorialStep["visual"] }) {
   }
   if (visual === "pause") {
     return <div className="tutorial-visual pause-visual" aria-label="Pause and help keyboard controls">
-      <kbd>ESC</kbd><span>PAUSE / FIELD MANUAL</span>
-      <div><b>H</b><small>REOPEN GUIDE</small><b>REPLAY</b><small>WATCH ARRIVAL FILM</small></div>
+      <kbd>ESC</kbd><span>RELEASE MOUSE / PAUSE / FIELD MANUAL</span>
+      <div><b>H</b><small>TOGGLE GUIDE</small><b>REPLAY</b><small>WATCH ARRIVAL FILM</small></div>
     </div>;
   }
   return <div className="tutorial-visual mars-visual" aria-label="Mars outpost arrival illustration">

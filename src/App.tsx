@@ -14,7 +14,7 @@ import { WORLD_BOUND, useColonyStore } from "./game/useColonyStore";
 import { MISSION_OBJECTIVES } from "./game/missionObjectives";
 import { accumulateFixedSteps } from "./game/fixedStep";
 import { landFlight, stepFlightAltitude, toggleFlight } from "./game/flightControls";
-import { MissionIntro, MissionTutorial } from "./game/MissionIntro";
+import { MissionBriefing, MissionIntro, MissionTutorial } from "./game/MissionIntro";
 
 const MAX_FLIGHT_ALTITUDE = 120;
 const INTRO_SEEN_KEY = "outpost-zero-intro-seen";
@@ -206,7 +206,15 @@ function Terrain() {
   );
 }
 
-function FollowCamera({ buildMode }: { buildMode: boolean }) {
+function FollowCamera({
+  buildMode,
+  controlsEnabled,
+  onOpenHelp,
+}: {
+  buildMode: boolean;
+  controlsEnabled: boolean;
+  onOpenHelp: () => void;
+}) {
   const { camera, gl } = useThree();
   const player = useRef<THREE.Group>(null);
   const keys = useRef<Record<string, boolean>>({});
@@ -215,6 +223,7 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
   const verticalVelocity = useRef(0);
   const isGrounded = useRef(true);
   const flightMode = useRef(false);
+  const programmaticUnlock = useRef(false);
 
   // The player is moved imperatively in useFrame. Do not put a changing
   // position prop on its JSX node; parent renders would reset movement.
@@ -252,21 +261,45 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       if (player.current) player.current.position.y = landed.altitude;
     };
 
+    const releasePointerLock = () => {
+      if (document.pointerLockElement === canvas) {
+        programmaticUnlock.current = true;
+        document.exitPointerLock();
+      }
+    };
+
     const handlePointerLockChange = () => {
       clearKeys();
       if (document.pointerLockElement !== canvas) {
+        const browserReleasedCapture = !programmaticUnlock.current;
+        programmaticUnlock.current = false;
         landSafely();
         canvas.blur();
+        if (
+          browserReleasedCapture &&
+          controlsEnabled &&
+          !buildMode &&
+          !document.hidden &&
+          document.hasFocus()
+        ) {
+          onOpenHelp();
+        }
+      } else {
+        programmaticUnlock.current = false;
       }
+    };
+
+    const handlePointerLockError = () => {
+      programmaticUnlock.current = false;
+      clearKeys();
+      landSafely();
     };
 
     const handleBlur = () => {
       clearKeys();
       landSafely();
       canvas.blur();
-      if (document.pointerLockElement === canvas) {
-        document.exitPointerLock();
-      }
+      releasePointerLock();
     };
 
     const handleVisibilityChange = () => {
@@ -274,37 +307,53 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
         clearKeys();
         landSafely();
         canvas.blur();
-        if (document.pointerLockElement === canvas) {
-          document.exitPointerLock();
-        }
+        releasePointerLock();
       }
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (buildMode || !controlsEnabled) return;
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) return;
+
       if (event.code === "Escape") {
         clearKeys();
         landSafely();
         canvas.blur();
-        if (document.pointerLockElement === canvas) {
-          document.exitPointerLock();
-        }
+        releasePointerLock();
         return;
       }
 
       if (!controlledKeys.includes(event.code)) return;
-      if (buildMode || (document.pointerLockElement !== canvas && document.activeElement !== canvas)) {
-        clearKeys();
-        return;
-      }
 
       event.preventDefault();
-      if (event.code === "KeyE" && !event.repeat && !keys.current.KeyE && player.current) {
-        const next = toggleFlight({ enabled: flightMode.current, altitude: player.current.position.y });
+
+      // A ground jump consumes one physical press. Ignore OS key-repeat events
+      // so holding Space cannot re-arm another jump after touching down. In
+      // flight, the initial keydown remains held until keyup for continuous ascent.
+      if (event.code === "Space" && event.repeat) return;
+
+      if (event.code === "KeyE" && !event.repeat && !keys.current.KeyE) {
+        const next = toggleFlight({
+          enabled: flightMode.current,
+          altitude: player.current?.position.y ?? 0,
+        });
+
         flightMode.current = next.enabled;
-        player.current.position.y = next.altitude;
+
+        if (player.current) {
+          player.current.position.y = next.altitude;
+        }
+
         verticalVelocity.current = 0;
         isGrounded.current = !next.enabled;
       }
+
       keys.current[event.code] = true;
     };
 
@@ -339,17 +388,15 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
     window.addEventListener("blur", handleBlur);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
-    document.addEventListener("pointerlockerror", handlePointerLockChange);
+    document.addEventListener("pointerlockerror", handlePointerLockError);
     window.addEventListener("mousemove", onMouseMove);
     canvas.addEventListener("click", onCanvasClick);
 
-    if (buildMode) {
+    if (buildMode || !controlsEnabled) {
       clearKeys();
       landSafely();
       canvas.blur();
-      if (document.pointerLockElement === canvas) {
-        document.exitPointerLock();
-      }
+      releasePointerLock();
     }
 
     return () => {
@@ -359,20 +406,17 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       window.removeEventListener("blur", handleBlur);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
-      document.removeEventListener("pointerlockerror", handlePointerLockChange);
+      document.removeEventListener("pointerlockerror", handlePointerLockError);
       window.removeEventListener("mousemove", onMouseMove);
       canvas.removeEventListener("click", onCanvasClick);
     };
-  }, [gl, buildMode]);
+  }, [gl, buildMode, controlsEnabled, onOpenHelp]);
 
   useFrame((_, delta) => {
     const astronaut = player.current;
 
-    if (!astronaut || buildMode) return;
-    if (document.pointerLockElement !== gl.domElement && document.activeElement !== gl.domElement) {
-      keys.current = {};
-      return;
-    }
+    if (!astronaut || buildMode || !controlsEnabled) return;
+   
 
     const dt = Math.min(delta, 0.05);
 
@@ -511,12 +555,16 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
 
 type WorldProps = {
   buildMode: boolean;
+  controlsEnabled: boolean;
+  onOpenHelp: () => void;
   selectedBuilding: StructureId;
   onPlaceBuilding: (type: StructureId, x: number, z: number, rotation: number) => void;
 };
 
 function World({
   buildMode,
+  controlsEnabled,
+  onOpenHelp,
   selectedBuilding,
   onPlaceBuilding,
 }: WorldProps) {
@@ -544,7 +592,7 @@ function World({
       <Terrain />
 
       <Rocks />
-      <FollowCamera buildMode={buildMode} />
+      <FollowCamera buildMode={buildMode} controlsEnabled={controlsEnabled} onOpenHelp={onOpenHelp} />
 
       <BuildMode
         active={buildMode}
@@ -582,9 +630,10 @@ export default function App() {
   const [buildMode, setBuildMode] = useState(false);
   const [selectedBuilding, setSelectedBuilding] = useState<StructureId>("solar_farm");
   const [showHelp, setShowHelp] = useState(false);
-  const [missionStage, setMissionStage] = useState<"intro" | "tutorial" | "game">(() => {
+  const openHelp = useCallback(() => setShowHelp(true), []);
+  const [missionStage, setMissionStage] = useState<"briefing" | "intro" | "tutorial" | "game">(() => {
     if (typeof window === "undefined") return "intro";
-    return "intro";
+    return "briefing";
   });
   const [showDevControls, setShowDevControls] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
@@ -707,6 +756,7 @@ export default function App() {
 
   const selectedDef = STRUCTURE_CATALOGUE[selectedBuilding];
   const simulationPaused = simulationStatus === "paused" || showHelp || buildMode;
+  const controlsEnabled = missionStatus === "playing" && simulationStatus === "running" && !showHelp && !buildMode;
   const buildCatalogue = Object.values(STRUCTURE_CATALOGUE).filter(
     (s) => s.visibleInMenu,
   );
@@ -727,6 +777,9 @@ export default function App() {
     setMissionStage(readSessionFlag(TUTORIAL_COMPLETE_KEY) ? "game" : "tutorial");
   };
 
+  if (missionStage === "briefing") {
+    return <MissionBriefing onBegin={() => setMissionStage("intro")} />;
+  }
   if (missionStage === "intro") {
     return <MissionIntro onComplete={finishIntro} />;
   }
@@ -755,6 +808,8 @@ export default function App() {
       >
         <World
           buildMode={buildMode}
+          controlsEnabled={controlsEnabled}
+          onOpenHelp={openHelp}
           selectedBuilding={selectedBuilding}
           onPlaceBuilding={placeBuilding}
         />
@@ -1074,10 +1129,12 @@ export default function App() {
             <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE
           </span>
           <span><kbd>SPACE</kbd> ASCEND / JUMP</span>
-          <span><kbd>E</kbd> TOGGLE FLIGHT</span>
+          
           <span><kbd>SHIFT</kbd> DESCEND / SPRINT</span>
-          <span><kbd>MOUSE</kbd> LOOK AROUND</span>
-          <span><kbd>ESC</kbd> RELEASE MOUSE</span>
+          
+          <span><kbd>ESC</kbd> RELEASE MOUSE / FIELD MANUAL</span>
+          
+          
         </div>
         <div className="build-label">
           OUTPOST ZERO <span>·</span> RELEASE CANDIDATE 1.0

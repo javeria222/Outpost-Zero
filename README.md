@@ -28,12 +28,11 @@ The production site is the static `dist/` directory. It can be deployed to a sta
 
 ## Controls
 
-- Click the 3D scene to capture the mouse; move the mouse to look around.
-- `W A S D` or the arrow keys move. `Shift` sprints on the ground and descends in flight mode.
-- Press `E` to toggle flight on or off. In flight mode, `Space` ascends and `Shift` descends. Flight is capped at 120 metres; exiting flight returns safely to the ground.
-- Choose a structure in the Construction panel, enter Build Mode, and click the ground to place it. The preview ring shows valid or invalid placement. Press `R` to rotate and `Esc` to cancel the preview or release the mouse.
-- Use Pause, `1x`, and `3x` to control mission time. `Esc` outside Build Mode opens the field manual and pauses the simulation.
-- Press `H` to toggle the field manual.
+- `W A S D` or the arrow keys move immediately during gameplay; a center-screen/scene click is not required. Click the 3D scene to capture the mouse, then move the mouse to look around.
+- `Shift` sprints on the ground and descends in Movement Mode. `Space` jumps on foot and ascends in Movement Mode.
+- Press `E` to toggle Movement Mode on or off. In this mode, `Space` ascends and `Shift` descends. Vertical movement is capped at 120 metres; turning the mode off returns the astronaut safely to the ground.
+- Choose a structure in the Construction panel, enter Build Mode, and click the ground to place it. The preview ring shows valid or invalid placement. Press `R` to rotate; `Esc` cancels the placement preview in Build Mode.
+- Use Pause, `1x`, and `3x` to control mission time. During active gameplay, `Esc` releases pointer capture, safely clears movement, pauses the mission, and opens the field manual. Press `H` to toggle the field manual; astronaut controls are suspended while it is open or mission time is paused.
 - Press `K` to reveal the hidden development control. Its button advances one SOL.
 
 ## Mission
@@ -42,7 +41,7 @@ The guided mission has eight steps: open construction, build power, shelter the 
 
 At 1x speed, one SOL takes 45 real seconds. The simulation uses one second fixed steps, pauses while the page is hidden or a modal/build session is open, and limits frame time so background tabs cannot cause a large resource jump.
 
-On the first launch, the supplied Earth-to-Mars video at `public/cinematics/outpost-zero-earth-to-mars.mp4` plays before the interactive field tutorial. The tutorial has seven navigable sections, persistent completion, Skip Tutorial, and a final Start Mission action; only then does the gameplay scene and simulation start. ESC, H, or CONTROLS reopens the field manual, which also has Replay Intro. If the video is missing or cannot play, the intro reports the expected asset path and offers Skip Intro. The video has not been supplied in this checkout yet.
+On every app launch, a mission briefing explains the Mars mission and controls. BEGIN MISSION starts the supplied Earth-to-Mars video at `public/cinematics/outpost-zero-earth-to-mars.mp4`. On the first run, the film leads into the seven-section interactive tutorial; completing or skipping it is saved, so later launches continue to gameplay after the film. The tutorial has Skip Tutorial and Start Mission actions. ESC, H, or CONTROLS reopens the field manual, which also has Replay Intro. The cinematic plays with its original audio at an audible volume. If the browser blocks audible autoplay, a Play Cinematic With Sound action starts it from the beginning. The sound toggle and volume control remain available.
 
 The colony starts with 200 oxygen, 100 energy, 150 food, and 3000 materials. Four crew consume 32 oxygen and 24 food per SOL. Structures are defined in `src/game/simulateTick.ts`:
 
