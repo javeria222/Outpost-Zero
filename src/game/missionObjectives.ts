@@ -25,10 +25,10 @@ export const MISSION_OBJECTIVES: MissionObjective[] = [
   {
     id: "build-solar",
     stepNumber: "02",
-    title: "Deploy a Solar Array",
+    title: "Build a Solar Farm",
     whyThisMatters:
       "All colony life support depends on power. Photovoltaic arrays provide essential daytime electricity.",
-    hint: "Select 'Solar Array' (100 MAT) in the construction dropdown and click the ground to place it.",
+    hint: "Select Solar Farm (100 MAT) in the construction dropdown and place it on open ground.",
     isCompleted: (state) =>
       state.structures.some((s) => s.structureId === "solar_farm" && s.active),
   },
@@ -72,7 +72,7 @@ export const MISSION_OBJECTIVES: MissionObjective[] = [
     title: "Balance the Power Grid (Net ≥ 0)",
     whyThisMatters:
       "Multiple active facilities consume power. If battery storage empties, life support enters brownout.",
-    hint: "Build a second Solar Array so your net energy rate is positive (+kW).",
+    hint: "Build a second Solar Farm so your net energy rate stays positive.",
     isCompleted: (state) => {
       const rates = calculateNetRates(state.structures);
       const solarCount = state.structures.filter(

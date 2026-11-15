@@ -1,21 +1,19 @@
 import { create } from "zustand";
 import {
   BUILD_RADIUS,
+  commitStructure,
   INITIAL_COLONY_STATE,
   SOL_DURATION,
-  STRUCTURE_CATALOGUE,
+  validatePlacement,
   WORLD_BOUND,
   simulateTick,
   type ColonyState,
+  type PlacementResult,
   type StructureId,
-} from "./simulateTick";
+} from "./simulateTick.ts";
 
 export { BUILD_RADIUS, WORLD_BOUND };
-
-export type PlacementResult = {
-  ok: boolean;
-  reason?: string;
-};
+export type { PlacementResult };
 
 export type ColonyStore = ColonyState & {
   placeStructure: (
@@ -38,41 +36,8 @@ export const useColonyStore = create<ColonyStore>((set, get) => ({
 
   placeStructure: (structureId, x, z, rotation) => {
     const state = get();
-    if (state.missionStatus !== "playing") {
-      return { ok: false, reason: "Simulation is not in active play state." };
-    }
-
-    const definition = STRUCTURE_CATALOGUE[structureId];
-    if (!definition) {
-      return { ok: false, reason: `Unknown structure type: ${structureId}` };
-    }
-
-    // Affordability validation
-    if (state.resources.materials < definition.buildCost.materials) {
-      return {
-        ok: false,
-        reason: `Insufficient materials. ${definition.name} requires ${definition.buildCost.materials} MAT.`,
-      };
-    }
-
-    // World boundary validation
-    if (Math.abs(x) > WORLD_BOUND || Math.abs(z) > WORLD_BOUND) {
-      return {
-        ok: false,
-        reason: "Placement out of bounds: Outpost perimeter exceeded.",
-      };
-    }
-
-    // Collision & proximity validation
-    const overlap = state.structures.some(
-      (s) => Math.hypot(s.x - x, s.z - z) < BUILD_RADIUS,
-    );
-    if (overlap) {
-      return {
-        ok: false,
-        reason: "Invalid placement: structure overlaps with existing module.",
-      };
-    }
+    const validation = validatePlacement(state, structureId, x, z);
+    if (!validation.ok) return validation;
 
     // Generate stable unique instance ID
     const instanceId =
@@ -80,24 +45,9 @@ export const useColonyStore = create<ColonyStore>((set, get) => ({
         ? crypto.randomUUID()
         : `${structureId}-${Date.now()}-${state.structures.length}`;
 
-    const newStructure = {
-      instanceId,
-      structureId,
-      x,
-      z,
-      rotation,
-      active: true,
-    };
-
-    set({
-      resources: {
-        ...state.resources,
-        materials: state.resources.materials - definition.buildCost.materials,
-      },
-      structures: [...state.structures, newStructure],
-    });
-
-    return { ok: true };
+    const committed = commitStructure(state, structureId, x, z, rotation, instanceId);
+    if (committed.result.ok) set(committed.state);
+    return committed.result;
   },
 
   tick: (deltaSeconds) => {
@@ -120,14 +70,18 @@ export const useColonyStore = create<ColonyStore>((set, get) => ({
     })),
 
   skipSol: () => {
-    // Advance by 1 full SOL in 0.25s clamped steps for determinism
-    let current: ColonyState = get();
-    const steps = SOL_DURATION / 0.25;
+    // Advance by one full SOL using the same fixed one-second simulation step.
+    const initial = get();
+    let current: ColonyState = {
+      ...initial,
+      simulationStatus: "running",
+    };
+    const steps = SOL_DURATION;
     for (let i = 0; i < steps; i++) {
-      current = simulateTick(current, 0.25);
+      current = simulateTick(current, 1);
       if (current.missionStatus !== "playing") break;
     }
-    set(current);
+    set({ ...current, simulationStatus: initial.simulationStatus });
   },
 
   resetMission: () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
@@ -10,8 +10,41 @@ import {
   calculateNetRates,
   type StructureId,
 } from "./game/simulateTick";
-import { useColonyStore } from "./game/useColonyStore";
+import { WORLD_BOUND, useColonyStore } from "./game/useColonyStore";
 import { MISSION_OBJECTIVES } from "./game/missionObjectives";
+import { accumulateFixedSteps } from "./game/fixedStep";
+import { landFlight, stepFlightAltitude, toggleFlight } from "./game/flightControls";
+import { MissionIntro, MissionTutorial } from "./game/MissionIntro";
+
+const MAX_FLIGHT_ALTITUDE = 120;
+const INTRO_SEEN_KEY = "outpost-zero-intro-seen";
+const TUTORIAL_COMPLETE_KEY = "outpost-zero-tutorial-complete";
+
+function readSessionFlag(key: string) {
+  try {
+    return window.localStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionFlag(key: string) {
+  try {
+    window.localStorage.setItem(key, "true");
+  } catch {
+    // The launch sequence still works when browser storage is unavailable.
+  }
+}
+
+function SceneFallback({ onReady }: { onReady: () => void }) {
+  useEffect(() => onReady(), [onReady]);
+
+  return (
+    <div className="scene-loader scene-error" role="alert">
+      3D rendering is unavailable in this browser.
+    </div>
+  );
+}
 
 function Astronaut() {
   const body = useRef<THREE.Group>(null);
@@ -78,146 +111,12 @@ function Astronaut() {
   );
 }
 
-function Habitat({
-  position,
-  label,
-}: {
-  position: [number, number, number];
-  label: string;
-}) {
-  return (
-    <group position={position}>
-      <mesh position={[0, 0.12, 0]}>
-        <cylinderGeometry args={[2.4, 2.7, 0.25, 12]} />
-        <meshStandardMaterial color="#6b5150" />
-      </mesh>
-
-      <mesh position={[0, 1.25, 0]}>
-        <cylinderGeometry args={[1.5, 1.65, 2.2, 12]} />
-        <meshStandardMaterial color="#c2cbd5" metalness={0.5} roughness={0.45} />
-      </mesh>
-
-      <mesh position={[0, 2.4, 0]}>
-        <sphereGeometry args={[1.48, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color="#7f96aa" metalness={0.4} roughness={0.4} />
-      </mesh>
-
-      {[-0.8, 0, 0.8].map((x) => (
-        <mesh key={x} position={[x, 1.45, -1.51]}>
-          <boxGeometry args={[0.34, 0.48, 0.05]} />
-          <meshBasicMaterial color="#63e6ff" />
-        </mesh>
-      ))}
-
-      <mesh position={[0, 0.75, -1.68]}>
-        <boxGeometry args={[0.7, 1.35, 0.12]} />
-        <meshStandardMaterial color="#35465a" metalness={0.65} />
-      </mesh>
-
-      <mesh position={[0, 0.28, 0]}>
-        <cylinderGeometry args={[2.48, 2.48, 0.035, 32]} />
-        <meshBasicMaterial color="#54e9ff" />
-      </mesh>
-
-      <pointLight position={[0, 2, 0]} color="#67ddff" intensity={2} distance={7} />
-
-      <mesh position={[0, 3.2, 0]}>
-        <sphereGeometry args={[0.08, 12, 12]} />
-        <meshBasicMaterial color="#6af5ff" />
-      </mesh>
-
-      <group position={[0, 3.65, 0]}>
-        <mesh>
-          <boxGeometry args={[1.5, 0.06, 0.04]} />
-          <meshBasicMaterial color="#65eaff" />
-        </mesh>
-      </group>
-
-      <mesh position={[0, 0.03, 0]}>
-        <cylinderGeometry args={[2.9, 2.9, 0.025, 32]} />
-        <meshBasicMaterial color="#b6b9c8" wireframe />
-      </mesh>
-
-      <mesh position={[0, 4.1, 0]}>
-        <sphereGeometry args={[0.001, 4, 4]} />
-        <meshBasicMaterial transparent opacity={0} />
-      </mesh>
-
-      <group position={[0, 4.3, 0]}>
-        <mesh>
-          <boxGeometry args={[0.01, 0.01, 0.01]} />
-          <meshBasicMaterial transparent opacity={0} />
-        </mesh>
-      </group>
-
-      <group name={label} />
-    </group>
-  );
-}
-
-function SolarFarm({ position }: { position: [number, number, number] }) {
-  return (
-    <group position={position}>
-      {Array.from({ length: 4 }, (_, i) => (
-        <group key={i} position={[i * 2.1, 0, 0]} rotation={[-0.28, 0, 0]}>
-          <mesh position={[0, 1.05, 0]}>
-            <boxGeometry args={[1.75, 0.08, 1.25]} />
-            <meshStandardMaterial color="#273c60" metalness={0.75} roughness={0.25} />
-          </mesh>
-
-          {[-0.4, 0, 0.4].map((x) => (
-            <mesh key={x} position={[x, 1.1, 0.005]}>
-              <boxGeometry args={[0.025, 0.085, 1.24]} />
-              <meshBasicMaterial color="#5ab8f5" />
-            </mesh>
-          ))}
-
-          {[-0.4, 0.4].map((z) => (
-            <mesh key={z} position={[0, 1.1, z]}>
-              <boxGeometry args={[1.75, 0.085, 0.025]} />
-              <meshBasicMaterial color="#5ab8f5" />
-            </mesh>
-          ))}
-
-          <mesh position={[0, 0.48, 0.1]}>
-            <cylinderGeometry args={[0.055, 0.08, 0.95, 8]} />
-            <meshStandardMaterial color="#a5b0bf" metalness={0.7} />
-          </mesh>
-        </group>
-      ))}
-    </group>
-  );
-}
-
-function CommunicationsTower() {
-  return (
-    <group position={[7, 0, -5]}>
-      <mesh position={[0, 1.5, 0]}>
-        <cylinderGeometry args={[0.09, 0.18, 3, 8]} />
-        <meshStandardMaterial color="#a8b6c7" metalness={0.7} />
-      </mesh>
-
-      {[0.6, 1.5, 2.4].map((y) => (
-        <mesh key={y} position={[0, y, 0]}>
-          <torusGeometry args={[0.38, 0.035, 8, 24]} />
-          <meshBasicMaterial color="#54eaff" />
-        </mesh>
-      ))}
-
-      <mesh position={[0, 3.15, 0]}>
-        <sphereGeometry args={[0.16, 16, 16]} />
-        <meshBasicMaterial color="#ffab72" />
-      </mesh>
-
-      <pointLight position={[0, 3.1, 0]} color="#ff8e68" intensity={3} distance={10} />
-    </group>
-  );
-}
-
 function Rocks() {
-  const rocks = Array.from({ length: 90 }, (_, i) => {
+  const rocks = Array.from({ length: 180 }, (_, i) => {
     const angle = i * 2.399;
-    const radius = 12 + (i % 9) * 2.4;
+    const radius = i < 90
+      ? 12 + (i % 9) * 2.4
+      : 55 + ((i - 90) % 10) * 20;
 
     return {
       position: [
@@ -263,21 +162,30 @@ function Terrain() {
         position={[0, -0.12, 0]}
         receiveShadow
       >
-        <planeGeometry args={[600, 600, 100, 100]} />
+        <planeGeometry args={[6000, 6000, 100, 100]} />
         <meshStandardMaterial color="#986b60" roughness={1} />
       </mesh>
 
-      {Array.from({ length: 15 }, (_, i) => (
-        <mesh
-          key={i}
-          position={[-65 + i * 9, 2 + (i % 4) * 1.4, -55 - (i % 3) * 5]}
-          scale={[8 + (i % 3) * 4, 5 + (i % 4) * 2, 6]}
-          rotation={[0, (i % 3) * 0.4, 0]}
-        >
-          <dodecahedronGeometry args={[1, 2]} />
-          <meshStandardMaterial color="#704c50" roughness={1} flatShading />
-        </mesh>
-      ))}
+      {Array.from({ length: 15 }, (_, i) => {
+        const angle = i * 2.399;
+        const radius = 110 + (i % 4) * 28;
+
+        return (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(angle) * radius,
+              2 + (i % 4) * 1.4,
+              Math.sin(angle) * radius,
+            ]}
+            scale={[8 + (i % 3) * 4, 5 + (i % 4) * 2, 6]}
+            rotation={[0, angle, 0]}
+          >
+            <dodecahedronGeometry args={[1, 2]} />
+            <meshStandardMaterial color="#704c50" roughness={1} flatShading />
+          </mesh>
+        );
+      })}
 
       {Array.from({ length: 100 }, (_, i) => {
         const x = Math.sin(i * 78.2) * 42;
@@ -306,6 +214,13 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
   const pitch = useRef(0.12);
   const verticalVelocity = useRef(0);
   const isGrounded = useRef(true);
+  const flightMode = useRef(false);
+
+  // The player is moved imperatively in useFrame. Do not put a changing
+  // position prop on its JSX node; parent renders would reset movement.
+  useEffect(() => {
+    player.current?.position.set(0, 0, 4);
+  }, []);
 
   useEffect(() => {
     const canvas = gl.domElement;
@@ -329,15 +244,25 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       keys.current = {};
     };
 
+    const landSafely = () => {
+      const landed = landFlight();
+      flightMode.current = landed.enabled;
+      verticalVelocity.current = 0;
+      isGrounded.current = true;
+      if (player.current) player.current.position.y = landed.altitude;
+    };
+
     const handlePointerLockChange = () => {
       clearKeys();
       if (document.pointerLockElement !== canvas) {
+        landSafely();
         canvas.blur();
       }
     };
 
     const handleBlur = () => {
       clearKeys();
+      landSafely();
       canvas.blur();
       if (document.pointerLockElement === canvas) {
         document.exitPointerLock();
@@ -347,6 +272,7 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         clearKeys();
+        landSafely();
         canvas.blur();
         if (document.pointerLockElement === canvas) {
           document.exitPointerLock();
@@ -357,6 +283,7 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === "Escape") {
         clearKeys();
+        landSafely();
         canvas.blur();
         if (document.pointerLockElement === canvas) {
           document.exitPointerLock();
@@ -371,6 +298,13 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       }
 
       event.preventDefault();
+      if (event.code === "KeyE" && !event.repeat && !keys.current.KeyE && player.current) {
+        const next = toggleFlight({ enabled: flightMode.current, altitude: player.current.position.y });
+        flightMode.current = next.enabled;
+        player.current.position.y = next.altitude;
+        verticalVelocity.current = 0;
+        isGrounded.current = !next.enabled;
+      }
       keys.current[event.code] = true;
     };
 
@@ -411,6 +345,7 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
 
     if (buildMode) {
       clearKeys();
+      landSafely();
       canvas.blur();
       if (document.pointerLockElement === canvas) {
         document.exitPointerLock();
@@ -479,7 +414,7 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
         keys.current.ShiftLeft ||
         keys.current.ShiftRight;
 
-      const speed = sprinting ? 9 : 5;
+      const speed = sprinting && !flightMode.current ? 9 : 5;
 
       astronaut.position.addScaledVector(
         movement,
@@ -492,30 +427,37 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       );
     }
 
-    // E: Hold to fly continuously
-    if (keys.current.KeyE) {
+    if (flightMode.current) {
       isGrounded.current = false;
-
-      verticalVelocity.current = Math.min(
-        verticalVelocity.current + 30 * dt,
-        12,
+      verticalVelocity.current = 0;
+      astronaut.position.y = stepFlightAltitude(
+        astronaut.position.y,
+        keys.current.Space,
+        keys.current.ShiftLeft || keys.current.ShiftRight,
+        dt,
+        MAX_FLIGHT_ALTITUDE,
       );
     } else {
-      // Space: Jump once
+      // Space jumps once while grounded outside flight mode.
       if (keys.current.Space && isGrounded.current) {
         verticalVelocity.current = 7;
         isGrounded.current = false;
         keys.current.Space = false;
       }
 
-      // Gravity
+      // Gravity applies only outside flight mode.
       verticalVelocity.current = Math.max(
         verticalVelocity.current - 18 * dt,
         -8,
       );
     }
 
-    astronaut.position.y += verticalVelocity.current * dt;
+      astronaut.position.y += verticalVelocity.current * dt;
+
+    if (astronaut.position.y > MAX_FLIGHT_ALTITUDE) {
+      astronaut.position.y = MAX_FLIGHT_ALTITUDE;
+      verticalVelocity.current = 0;
+    }
 
     // Ground collision
     if (astronaut.position.y <= 0) {
@@ -527,14 +469,14 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
     // World boundaries
     astronaut.position.x = THREE.MathUtils.clamp(
       astronaut.position.x,
-      -80,
-      80,
+      -WORLD_BOUND,
+      WORLD_BOUND,
     );
 
     astronaut.position.z = THREE.MathUtils.clamp(
       astronaut.position.z,
-      -80,
-      80,
+      -WORLD_BOUND,
+      WORLD_BOUND,
     );
 
     // Follow camera
@@ -557,10 +499,11 @@ function FollowCamera({ buildMode }: { buildMode: boolean }) {
       astronaut.position.y + 1.4,
       astronaut.position.z - Math.cos(yaw.current) * 2,
     );
+
   });
 
   return (
-    <group ref={player} position={[0, 0, 4]}>
+    <group ref={player} name="astronaut">
       <Astronaut />
     </group>
   );
@@ -600,11 +543,6 @@ function World({
 
       <Terrain />
 
-      <Habitat position={[-5, 0, -5]} label="HAB-01" />
-      <Habitat position={[-11, 0, -8]} label="HAB-02" />
-
-      <SolarFarm position={[3, 0, -10]} />
-      <CommunicationsTower />
       <Rocks />
       <FollowCamera buildMode={buildMode} />
 
@@ -644,9 +582,19 @@ export default function App() {
   const [buildMode, setBuildMode] = useState(false);
   const [selectedBuilding, setSelectedBuilding] = useState<StructureId>("solar_farm");
   const [showHelp, setShowHelp] = useState(false);
+  const [missionStage, setMissionStage] = useState<"intro" | "tutorial" | "game">(() => {
+    if (typeof window === "undefined") return "intro";
+    return "intro";
+  });
+  const [showDevControls, setShowDevControls] = useState(false);
+  const [sceneReady, setSceneReady] = useState(false);
   const [objectiveIdleSeconds, setObjectiveIdleSeconds] = useState(0);
+  const [placementFeedback, setPlacementFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+  const placementTimeout = useRef<number | null>(null);
+  const markSceneReady = useCallback(() => setSceneReady(true), []);
+  const simulationAccumulator = useRef(0);
 
-  // Simulation tick loop (clamped, fixed 1s accumulator inside simulateTick)
+  // Fixed one-second simulation steps, independent of render frame rate.
   useEffect(() => {
     let lastTime = performance.now();
     let animationFrameId: number;
@@ -658,10 +606,18 @@ export default function App() {
       if (
         !document.hidden &&
         simulationStatus === "running" &&
-        missionStatus === "playing"
+        missionStatus === "playing" &&
+        missionStage === "game" &&
+        !showHelp &&
+        !buildMode
       ) {
-        const effectiveDt = rawDt * speed;
-        tick(effectiveDt);
+        const fixedSteps = accumulateFixedSteps(simulationAccumulator.current, rawDt, speed);
+        simulationAccumulator.current = fixedSteps.remainder;
+        for (let i = 0; i < fixedSteps.steps; i += 1) {
+          tick(1);
+        }
+      } else if (missionStatus !== "playing") {
+        simulationAccumulator.current = 0;
       }
 
       animationFrameId = requestAnimationFrame(loop);
@@ -672,21 +628,29 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [simulationStatus, missionStatus, speed, tick]);
+  }, [simulationStatus, missionStatus, speed, tick, showHelp, buildMode, missionStage]);
 
-  // Dev Tool: Press 'K' to skip 1 SOL, 'H' for Help
+  // Hidden development tools are only exposed after pressing K.
   useEffect(() => {
     const onDevKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyK") {
-        skipSol();
-      }
-      if (e.code === "KeyH") {
+      if (e.repeat) return;
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) return;
+
+      if (e.code === "Escape" && !buildMode && missionStatus === "playing") {
+        setShowHelp((visible) => !visible);
+      } else if (e.code === "KeyK") {
+        setShowDevControls((visible) => !visible);
+      } else if (e.code === "KeyH") {
         setShowHelp((prev) => !prev);
       }
     };
     window.addEventListener("keydown", onDevKeyDown);
     return () => window.removeEventListener("keydown", onDevKeyDown);
-  }, [skipSol]);
+  }, [skipSol, buildMode, missionStatus]);
 
   const rates = useMemo(() => calculateNetRates(structures), [structures]);
 
@@ -704,17 +668,29 @@ export default function App() {
     }
 
     const interval = setInterval(() => {
-      if (simulationStatus === "running" && missionStatus === "playing") {
+      if (
+        !document.hidden &&
+        !showHelp &&
+        !buildMode &&
+        simulationStatus === "running" &&
+        missionStatus === "playing"
+      ) {
         setObjectiveIdleSeconds((s) => s + 1);
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentObjectiveIndex, simulationStatus, missionStatus]);
+  }, [currentObjectiveIndex, simulationStatus, missionStatus, showHelp, buildMode]);
 
   const placeBuilding = useCallback(
     (type: StructureId, x: number, z: number, rotation: number) => {
-      placeStructure(type, x, z, rotation);
+      const result = placeStructure(type, x, z, rotation);
+      setPlacementFeedback({
+        ok: result.ok,
+        message: result.ok ? `${STRUCTURE_CATALOGUE[type].name} installed.` : result.reason ?? "Placement rejected.",
+      });
+      if (placementTimeout.current !== null) window.clearTimeout(placementTimeout.current);
+      placementTimeout.current = window.setTimeout(() => setPlacementFeedback(null), 3500);
     },
     [placeStructure],
   );
@@ -730,6 +706,7 @@ export default function App() {
   };
 
   const selectedDef = STRUCTURE_CATALOGUE[selectedBuilding];
+  const simulationPaused = simulationStatus === "paused" || showHelp || buildMode;
   const buildCatalogue = Object.values(STRUCTURE_CATALOGUE).filter(
     (s) => s.visibleInMenu,
   );
@@ -737,12 +714,41 @@ export default function App() {
   const resourcePercent = (value: number, max = 500) =>
     Math.max(0, Math.min(100, (value / max) * 100));
 
+  const beginMission = () => {
+    writeSessionFlag(INTRO_SEEN_KEY);
+    writeSessionFlag(TUTORIAL_COMPLETE_KEY);
+    setMissionStage("game");
+    setShowHelp(false);
+    setPaused(false);
+  };
+
+  const finishIntro = () => {
+    writeSessionFlag(INTRO_SEEN_KEY);
+    setMissionStage(readSessionFlag(TUTORIAL_COMPLETE_KEY) ? "game" : "tutorial");
+  };
+
+  if (missionStage === "intro") {
+    return <MissionIntro onComplete={finishIntro} />;
+  }
+  if (missionStage === "tutorial") {
+    return <MissionTutorial
+      onStartMission={beginMission}
+      onSkipTutorial={beginMission}
+      onReplayIntro={() => setMissionStage("intro")}
+    />;
+  }
+
   return (
     <main className="game">
       <Canvas
         tabIndex={0}
         style={{ outline: "none" }}
-        shadows
+        onCreated={({ gl }) => {
+          gl.domElement.tabIndex = 0;
+          markSceneReady();
+        }}
+        fallback={<SceneFallback onReady={markSceneReady} />}
+        shadows="percentage"
         dpr={[1, 1.5]}
         camera={{ position: [0, 5, 12], fov: 65, near: 0.1, far: 500 }}
         gl={{ antialias: true, powerPreference: "high-performance" }}
@@ -753,6 +759,14 @@ export default function App() {
           onPlaceBuilding={placeBuilding}
         />
       </Canvas>
+
+      {!sceneReady && (
+        <div className="scene-loader" role="status" aria-live="polite">
+          <span className="scene-loader-mark" aria-hidden="true" />
+          <strong>INITIALIZING SURFACE OPERATIONS</strong>
+          <small>Preparing the Mars landing zone...</small>
+        </div>
+      )}
 
       <header className="topbar">
         <div className="brand">
@@ -768,7 +782,7 @@ export default function App() {
           MARS 2049 <span className="muted">/</span> SOL{" "}
           {String(sol).padStart(2, "0")} OF 05
           <span className="muted" style={{ marginLeft: "8px" }}>
-            ({simulationStatus === "paused" ? "PAUSED" : `${speed}× SPEED`})
+            ({simulationPaused ? "PAUSED" : `${speed}× SPEED`})
           </span>
         </div>
 
@@ -796,6 +810,16 @@ export default function App() {
               <p>{alert.reason}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {placementFeedback && (
+        <div
+          className={`placement-feedback ${placementFeedback.ok ? "success" : "error"}`}
+          role="status"
+          aria-live="polite"
+        >
+          {placementFeedback.message}
         </div>
       )}
 
@@ -847,7 +871,7 @@ export default function App() {
         <Resource
           label="POWER"
           value={`${Math.round(resources.energy)} kW`}
-          delta={`${rates.netEnergyPerSol >= 0 ? "+" : ""}${Math.round(rates.netEnergyPerSol)} kW/SOL`}
+          delta={`${rates.energyProduction >= 0 ? "+" : ""}${Math.round(rates.energyProduction)} IN / -${Math.round(rates.energyDemand)} USE / NET ${rates.netEnergyPerSol >= 0 ? "+" : ""}${Math.round(rates.netEnergyPerSol)} /SOL`}
           deltaClass={rates.netEnergyPerSol >= 0 ? "positive" : "negative"}
           percent={resourcePercent(resources.energy, 300)}
           color="#65eaff"
@@ -855,7 +879,7 @@ export default function App() {
         <Resource
           label="OXYGEN"
           value={`${Math.round(resources.oxygen)} kg`}
-          delta={`${rates.netOxygenPerSol >= 0 ? "+" : ""}${Math.round(rates.netOxygenPerSol)} kg/SOL`}
+          delta={`+${Math.round(rates.oxygenProduction)} MAKE / -${rates.crewOxygenDemand} CREW / NET ${rates.netOxygenPerSol >= 0 ? "+" : ""}${Math.round(rates.netOxygenPerSol)} kg/SOL`}
           deltaClass={rates.netOxygenPerSol >= 0 ? "positive" : "negative"}
           percent={resourcePercent(resources.oxygen, 500)}
           color="#a8a0ff"
@@ -863,7 +887,7 @@ export default function App() {
         <Resource
           label="FOOD"
           value={`${Math.round(resources.food)} rations`}
-          delta={`${rates.netFoodPerSol >= 0 ? "+" : ""}${Math.round(rates.netFoodPerSol)} /SOL`}
+          delta={`+${Math.round(rates.foodProduction)} GROW / -${rates.crewFoodDemand} CREW / NET ${rates.netFoodPerSol >= 0 ? "+" : ""}${Math.round(rates.netFoodPerSol)} /SOL`}
           deltaClass={rates.netFoodPerSol >= 0 ? "positive" : "negative"}
           percent={resourcePercent(resources.food, 500)}
           color="#79e7ae"
@@ -873,7 +897,7 @@ export default function App() {
           value={`${Math.round(resources.materials)} MAT`}
           delta="STOCK"
           deltaClass="neutral"
-          percent={resourcePercent(resources.materials, 800)}
+          percent={resourcePercent(resources.materials, 3000)}
           color="#f1b778"
         />
 
@@ -887,6 +911,15 @@ export default function App() {
         <div className="status-heading">
           <span className="live-dot" />
           OUTPOST SYSTEMS
+        </div>
+
+        <div className="system">
+          <span className="system-icon">04</span>
+          <div>
+            <strong>Crew Complement</strong>
+            <small>4 JUNIOR ASTRONAUTS</small>
+          </div>
+          <i className="status-good" />
         </div>
 
         <div className="system">
@@ -983,14 +1016,14 @@ export default function App() {
         <div className="sim-controls">
           <button
             type="button"
-            className={simulationStatus === "paused" ? "active" : ""}
+            className={simulationPaused ? "active" : ""}
             onClick={togglePaused}
           >
-            {simulationStatus === "paused" ? "▶ RESUME" : "❚❚ PAUSE"}
+            {simulationPaused ? "▶ RESUME" : "❚❚ PAUSE"}
           </button>
           <button
             type="button"
-            className={speed === 1 && simulationStatus === "running" ? "active" : ""}
+            className={speed === 1 && !simulationPaused ? "active" : ""}
             onClick={() => {
               setSpeed(1);
               setPaused(false);
@@ -1000,7 +1033,7 @@ export default function App() {
           </button>
           <button
             type="button"
-            className={speed === 3 && simulationStatus === "running" ? "active" : ""}
+            className={speed === 3 && !simulationPaused ? "active" : ""}
             onClick={() => {
               setSpeed(3);
               setPaused(false);
@@ -1009,6 +1042,12 @@ export default function App() {
             3×
           </button>
         </div>
+
+        {showDevControls && (
+          <button type="button" onClick={skipSol} disabled={missionStatus !== "playing"}>
+            DEV: SKIP ONE SOL
+          </button>
+        )}
 
         {buildMode && (
           <small style={{ marginTop: "10px" }}>
@@ -1034,12 +1073,11 @@ export default function App() {
           <span>
             <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE
           </span>
-          <span><kbd>SPACE</kbd> JUMP</span>
-          <span><kbd>E</kbd> JETPACK / FLY</span>
-          <span><kbd>SHIFT</kbd> SPRINT</span>
+          <span><kbd>SPACE</kbd> ASCEND / JUMP</span>
+          <span><kbd>E</kbd> TOGGLE FLIGHT</span>
+          <span><kbd>SHIFT</kbd> DESCEND / SPRINT</span>
           <span><kbd>MOUSE</kbd> LOOK AROUND</span>
           <span><kbd>ESC</kbd> RELEASE MOUSE</span>
-          <span><kbd>K</kbd> SKIP SOL (DEV)</span>
         </div>
         <div className="build-label">
           OUTPOST ZERO <span>·</span> RELEASE CANDIDATE 1.0
@@ -1105,65 +1143,20 @@ export default function App() {
 
       {/* Controls Help Modal */}
       {showHelp && (
-        <div className="mission-modal-overlay" onClick={() => setShowHelp(false)}>
-          <div
-            className="mission-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: "500px" }}
-          >
-            <h2>ASTRONAUT FIELD MANUAL</h2>
-            <p>
-              Junior Astronaut Mission Trainer keyboard & mouse reference.
-            </p>
-
-            <table className="controls-table">
-              <tbody>
-                <tr>
-                  <td>W / A / S / D or ARROWS</td>
-                  <td>Surface traversal & exploration</td>
-                </tr>
-                <tr>
-                  <td>SHIFT</td>
-                  <td>Sprint booster</td>
-                </tr>
-                <tr>
-                  <td>SPACE</td>
-                  <td>EVA suit thruster jump</td>
-                </tr>
-                <tr>
-                  <td>E (Hold)</td>
-                  <td>Continuous flight / aerial survey</td>
-                </tr>
-                <tr>
-                  <td>MOUSE (Left Click)</td>
-                  <td>Engage camera look / Place structure in build mode</td>
-                </tr>
-                <tr>
-                  <td>R</td>
-                  <td>Rotate structure 90° during placement</td>
-                </tr>
-                <tr>
-                  <td>ESC</td>
-                  <td>Release mouse look / Cancel placement</td>
-                </tr>
-                <tr>
-                  <td>K</td>
-                  <td>Skip 1 Sol (Trainer Dev Tool)</td>
-                </tr>
-              </tbody>
-            </table>
-
-            <div className="modal-actions" style={{ marginTop: "20px" }}>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => setShowHelp(false)}
-              >
-                RESUME MISSION
-              </button>
-            </div>
-          </div>
-        </div>
+        <MissionTutorial
+          helpMode
+          onStartMission={() => {
+            setShowHelp(false);
+            setPaused(false);
+          }}
+          onSkipTutorial={() => setShowHelp(false)}
+          onReplayIntro={() => {
+            setShowHelp(false);
+            setMissionStage("intro");
+            setBuildMode(false);
+            setPaused(true);
+          }}
+        />
       )}
     </main>
   );

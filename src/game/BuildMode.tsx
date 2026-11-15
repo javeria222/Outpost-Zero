@@ -141,16 +141,21 @@ export function Structure({ type }: { type: BuildingType }) {
     case "battery":
       return (
         <group>
-          {[-0.55, 0.55].map((x) => (
-            <mesh key={x} position={[x, 0.75, 0]} {...common}>
-              <boxGeometry args={[0.9, 1.5, 1.4]} />
-              <meshStandardMaterial color="#53677e" metalness={0.6} />
+          <mesh position={[0, 1.5, 0]} {...common}>
+            <cylinderGeometry args={[0.08, 0.16, 3, 10]} />
+            <meshStandardMaterial color="#a8b6c7" metalness={0.7} />
+          </mesh>
+          {[0.6, 1.5, 2.4].map((y) => (
+            <mesh key={y} position={[0, y, 0]} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[0.38, 0.035, 8, 24]} />
+              <meshBasicMaterial color="#54eaff" />
             </mesh>
           ))}
-          <mesh position={[0, 1.65, 0]}>
-            <boxGeometry args={[0.45, 0.12, 0.15]} />
-            <meshBasicMaterial color="#5af4ff" />
+          <mesh position={[0, 3.15, 0]}>
+            <sphereGeometry args={[0.16, 16, 16]} />
+            <meshBasicMaterial color="#ffab72" />
           </mesh>
+          <pointLight position={[0, 3.1, 0]} color="#ff8e68" intensity={2} distance={7} />
         </group>
       );
   }
@@ -257,16 +262,6 @@ export default function BuildMode({
       if (!clicked) return;
 
       const [x, , z] = clicked;
-      if (Math.abs(x) > WORLD_BOUND || Math.abs(z) > WORLD_BOUND) return;
-
-      const currentDef = STRUCTURE_CATALOGUE[selected];
-      if (!currentDef || materials < currentDef.buildCost.materials) return;
-
-      const occupied = structures.some(
-        (s) => Math.hypot(s.x - x, s.z - z) < BUILD_RADIUS,
-      );
-      if (occupied) return;
-
       placingRef.current = true;
       try {
         onPlace(selected, x, z, rotation);
@@ -293,12 +288,10 @@ export default function BuildMode({
     gl,
     ground,
     onPlace,
-    structures,
     selected,
     rotation,
     raycaster,
     target,
-    materials,
   ]);
 
   return (

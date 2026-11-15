@@ -5,7 +5,13 @@ export const CREW_SIZE = 4;
 export const CREW_OXYGEN_DEMAND_PER_SOL = 32; // 8 per crew
 export const CREW_FOOD_DEMAND_PER_SOL = 24;   // 6 per crew
 export const BUILD_RADIUS = 3.5;
-export const WORLD_BOUND = 45;
+export const WORLD_BOUND = 250;
+export const RESOURCE_CAPACITY = {
+  oxygen: 500,
+  energy: 300,
+  food: 500,
+  materials: 800,
+} as const;
 
 export type ResourceId = "oxygen" | "energy" | "food" | "materials";
 
@@ -72,7 +78,7 @@ export const STRUCTURE_CATALOGUE: Record<StructureId, StructureDefinition> = {
   },
   solar_farm: {
     id: "solar_farm",
-    name: "Solar Array",
+    name: "Solar Farm",
     description: "Photovoltaic farm harvesting Martian sunlight to generate 40 kW/SOL.",
     category: "power",
     buildCost: { materials: 100 },
@@ -88,7 +94,7 @@ export const STRUCTURE_CATALOGUE: Record<StructureId, StructureDefinition> = {
     description: "High-gain antenna array establishing telemetry relay with Earth Mission Control.",
     category: "communications",
     buildCost: { materials: 80 },
-    meshType: "battery", // mapped to battery mesh in BuildMode
+    meshType: "battery", // communications antenna visual in BuildMode
     effects: {
       energyConsumption: 8,
     },
@@ -158,6 +164,8 @@ export type ColonyState = {
   buildModeOpenedOnce: boolean;
 };
 
+export type PlacementResult = { ok: boolean; reason?: string };
+
 export const INITIAL_COLONY_STATE: ColonyState = {
   sol: 1,
   elapsedSeconds: 0,
@@ -165,7 +173,7 @@ export const INITIAL_COLONY_STATE: ColonyState = {
     oxygen: 200,
     energy: 100,
     food: 150,
-    materials: 800,
+    materials: 3000,
   },
   structures: [],
   alerts: [],
@@ -177,6 +185,64 @@ export const INITIAL_COLONY_STATE: ColonyState = {
   foodZeroSeconds: 0,
   buildModeOpenedOnce: false,
 };
+
+export function validatePlacement(
+  state: ColonyState,
+  structureId: StructureId,
+  x: number,
+  z: number,
+): PlacementResult {
+  if (state.missionStatus !== "playing") {
+    return { ok: false, reason: "Simulation is not in active play state." };
+  }
+
+  const definition = STRUCTURE_CATALOGUE[structureId];
+  if (!definition) {
+    return { ok: false, reason: `Unknown structure type: ${structureId}` };
+  }
+  if (state.resources.materials < definition.buildCost.materials) {
+    return {
+      ok: false,
+      reason: `Insufficient materials. ${definition.name} requires ${definition.buildCost.materials} MAT.`,
+    };
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(z) || Math.abs(x) > WORLD_BOUND || Math.abs(z) > WORLD_BOUND) {
+    return { ok: false, reason: "Placement out of bounds: Outpost perimeter exceeded." };
+  }
+  if (state.structures.some((item) => Math.hypot(item.x - x, item.z - z) < BUILD_RADIUS)) {
+    return { ok: false, reason: "Invalid placement: structure overlaps with existing module." };
+  }
+
+  return { ok: true };
+}
+
+export function commitStructure(
+  state: ColonyState,
+  structureId: StructureId,
+  x: number,
+  z: number,
+  rotation: number,
+  instanceId: string,
+): { state: ColonyState; result: PlacementResult } {
+  const result = validatePlacement(state, structureId, x, z);
+  if (!result.ok) return { state, result };
+
+  const definition = STRUCTURE_CATALOGUE[structureId];
+  return {
+    state: {
+      ...state,
+      resources: {
+        ...state.resources,
+        materials: state.resources.materials - definition.buildCost.materials,
+      },
+      structures: [
+        ...state.structures,
+        { instanceId, structureId, x, z, rotation, active: true },
+      ],
+    },
+    result,
+  };
+}
 
 /**
  * Calculates current rates per SOL based on placed active structures and crew demand.
@@ -233,8 +299,8 @@ export function simulateTick(
     return state;
   }
 
-  // Delta clamping: prevent massive tick steps from tab backgrounding
-  const dt = Math.max(0, Math.min(deltaSeconds, 0.25));
+  // The app supplies one-second fixed steps; reject larger external steps.
+  const dt = Math.max(0, Math.min(deltaSeconds, 1));
   if (dt <= 0) return state;
 
   const nextElapsed = state.elapsedSeconds + dt;
@@ -243,14 +309,14 @@ export function simulateTick(
   // Determine current active status and brownout
   const rates = calculateNetRates(state.structures);
 
-  // Brownout check: if energy <= 0 and demand > 0
-  const isBrownout = state.resources.energy <= 0 && rates.energyDemand > 0;
+  // Systems resume once stored energy is above zero; a depleted grid browns out.
+  const brownoutAtStart = state.resources.energy <= 0 && rates.energyDemand > 0;
 
   // Update structure active states immutably
   let structuresChanged = false;
   const nextStructures = state.structures.map((s) => {
     const def = STRUCTURE_CATALOGUE[s.structureId];
-    const shouldBeActive = def.category === "power" || !isBrownout;
+    const shouldBeActive = def.category === "power" || !brownoutAtStart;
     if (s.active !== shouldBeActive) {
       structuresChanged = true;
       return { ...s, active: shouldBeActive };
@@ -266,9 +332,20 @@ export function simulateTick(
   const dOxygen = (activeRates.netOxygenPerSol / SOL_DURATION) * dt;
   const dFood = (activeRates.netFoodPerSol / SOL_DURATION) * dt;
 
-  const nextEnergy = Math.max(0, Math.min(300, state.resources.energy + dEnergy));
-  const nextOxygen = Math.max(0, Math.min(500, state.resources.oxygen + dOxygen));
-  const nextFood = Math.max(0, Math.min(500, state.resources.food + dFood));
+  const nextEnergy = Math.max(0, Math.min(RESOURCE_CAPACITY.energy, state.resources.energy + dEnergy));
+  const nextOxygen = Math.max(0, Math.min(RESOURCE_CAPACITY.oxygen, state.resources.oxygen + dOxygen));
+  const nextFood = Math.max(0, Math.min(RESOURCE_CAPACITY.food, state.resources.food + dFood));
+  const brownoutActive =
+    nextEnergy <= 0 && (activeRates.energyDemand > 0 || brownoutAtStart);
+  const finalStructures = brownoutActive
+    ? nextStructures.map((structure) => {
+        const def = STRUCTURE_CATALOGUE[structure.structureId];
+        return def.category === "power" || !structure.active
+          ? structure
+          : { ...structure, active: false };
+      })
+    : nextStructures;
+  const stateRates = calculateNetRates(finalStructures);
 
   // Track time at zero for failure criteria (Spec 17.3)
   const nextOxygenZeroSeconds =
@@ -287,7 +364,7 @@ export function simulateTick(
       severity: "critical",
       reason: "Atmospheric oxygen exhausted! Life support failing.",
     });
-  } else if (nextOxygen < 50) {
+  } else if (nextOxygen < RESOURCE_CAPACITY.oxygen * 0.25) {
     newAlerts.push({
       id: "low-oxygen",
       system: "oxygen",
@@ -297,14 +374,14 @@ export function simulateTick(
   }
 
   // Energy & Brownout alerts
-  if (isBrownout) {
+  if (brownoutActive) {
     newAlerts.push({
       id: "brownout",
       system: "energy",
       severity: "critical",
       reason: "Colony brownout: Power grid depleted. Non-solar systems offline.",
     });
-  } else if (nextEnergy < 25) {
+  } else if (nextEnergy < RESOURCE_CAPACITY.energy * 0.25) {
     newAlerts.push({
       id: "low-energy",
       system: "energy",
@@ -321,7 +398,7 @@ export function simulateTick(
       severity: "critical",
       reason: "Food rations depleted! Crew starvation imminent.",
     });
-  } else if (nextFood < 37.5) {
+  } else if (nextFood < RESOURCE_CAPACITY.food * 0.25) {
     newAlerts.push({
       id: "low-food",
       system: "food",
@@ -330,8 +407,25 @@ export function simulateTick(
     });
   }
 
+  // Construction reserves
+  if (state.resources.materials === 0) {
+    newAlerts.push({
+      id: "critical-materials",
+      system: "materials",
+      severity: "critical",
+      reason: "Construction materials are exhausted. The outpost cannot build more infrastructure.",
+    });
+  } else if (state.resources.materials < RESOURCE_CAPACITY.materials * 0.25) {
+    newAlerts.push({
+      id: "low-materials",
+      system: "materials",
+      severity: "warning",
+      reason: "Construction reserves are below 25%. Prioritize the remaining materials.",
+    });
+  }
+
   // Habitat shelter warning
-  if (activeRates.habitatCapacity < CREW_SIZE) {
+  if (stateRates.habitatCapacity < CREW_SIZE) {
     newAlerts.push({
       id: "no-shelter",
       system: "construction",
@@ -364,22 +458,18 @@ export function simulateTick(
   }
   // Victory: Reach SOL 6 with capacity >= 4, comms tower active, and no resource at 0
   else if (nextSol >= 6) {
-    const hasShelter = activeRates.habitatCapacity >= CREW_SIZE;
-    const hasComms = nextStructures.some(
+    const hasShelter = stateRates.habitatCapacity >= CREW_SIZE;
+    const hasComms = finalStructures.some(
       (s) => s.structureId === "comms_tower" && s.active,
     );
-    const noStarvationOrAsphyxiation =
-      nextOxygen > 0 && nextEnergy > 0 && nextFood > 0;
+    const noEmptyResources =
+      nextOxygen > 0 &&
+      nextEnergy > 0 &&
+      nextFood > 0 &&
+      state.resources.materials > 0;
 
-    if (hasShelter && hasComms && noStarvationOrAsphyxiation) {
+    if (hasShelter && hasComms && noEmptyResources) {
       missionStatus = "victory";
-    } else {
-      missionStatus = "failed";
-      failureReason = !hasShelter
-        ? "Colony failed: Outpost survived 5 Sols but lacked adequate crew shelter."
-        : !hasComms
-          ? "Colony failed: Earth contact could not be verified (no active Comms Tower)."
-          : "Colony failed: Sol 6 reached with one or more critical resource deficits.";
     }
   }
 
@@ -393,7 +483,7 @@ export function simulateTick(
       food: nextFood,
       materials: state.resources.materials,
     },
-    structures: nextStructures,
+    structures: finalStructures,
     alerts: newAlerts,
     alertHistory: nextAlertHistory,
     missionStatus,
